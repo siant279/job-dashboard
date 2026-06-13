@@ -13,13 +13,14 @@ const FIT_COLORS = {
   stretch: { bg: '#FCE4EC', text: '#880E4F', border: '#F48FB1' },
 }
 
-const STATUS_OPTIONS = ['new', 'saved', 'applied', 'maybe', 'hidden']
+const STATUS_OPTIONS = ['new', 'saved', 'applied', 'maybe', "didn't apply", 'hidden']
 
 const STATUS_COLORS = {
   new: '#6366F1',
   saved: '#059669',
   applied: '#0EA5E9',
   maybe: '#D97706',
+  "didn't apply": '#64748B',
   hidden: '#9CA3AF',
 }
 
@@ -424,6 +425,7 @@ export default function Dashboard() {
             { label: 'Saved', value: counts.saved || 0, color: STATUS_COLORS.saved },
             { label: 'Applied', value: counts.applied || 0, color: STATUS_COLORS.applied },
             { label: 'Maybe', value: counts.maybe || 0, color: STATUS_COLORS.maybe },
+            { label: "Didn't apply", value: counts["didn't apply"] || 0, color: STATUS_COLORS["didn't apply"] },
           ].map(({ label, value, color }) => (
             <div key={label} style={{
               background: '#fff',
