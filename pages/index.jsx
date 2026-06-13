@@ -109,22 +109,31 @@ function StatusBadge({ status, onChange, jobId }) {
   )
 }
 
-function JobCard({ job, onStatusChange }) {
+function JobCard({ job, onStatusChange, selected, onToggleSelect }) {
   const [expanded, setExpanded] = useState(false)
   const score = job.fields.fit_score || 0
 
   return (
     <div style={{
-      background: '#fff',
-      border: '1px solid #E5E7EB',
+      background: selected ? '#EEF2FF' : '#fff',
+      border: selected ? '1px solid #A5B4FC' : '1px solid #E5E7EB',
       borderRadius: '12px',
       padding: '16px 20px',
       marginBottom: '8px',
       borderLeft: `4px solid ${getFitColor(score).border}`,
       opacity: job.fields.status === 'hidden' ? 0.4 : 1,
-      transition: 'opacity 0.2s',
+      transition: 'opacity 0.2s, background 0.15s, border-color 0.15s',
     }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', flexWrap: 'wrap' }}>
+        <label style={{ flexShrink: 0, display: 'flex', alignItems: 'center', paddingTop: '4px', cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={selected}
+            onChange={() => onToggleSelect(job.id)}
+            style={{ width: '16px', height: '16px', cursor: 'pointer', accentColor: '#6366F1' }}
+          />
+        </label>
+
         {/* Score */}
         <div style={{ flexShrink: 0, width: '44px', textAlign: 'center' }}>
           <div style={{
@@ -250,6 +259,9 @@ export default function Dashboard() {
     search: '',
   })
   const [lastRun, setLastRun] = useState(null)
+  const [selectedIds, setSelectedIds] = useState([])
+  const [bulkStatus, setBulkStatus] = useState('')
+  const [bulkUpdating, setBulkUpdating] = useState(false)
 
   const fetchJobs = useCallback(async () => {
     setLoading(true)
@@ -294,13 +306,12 @@ export default function Dashboard() {
   useEffect(() => { fetchJobs() }, [fetchJobs])
 
   const updateStatus = useCallback(async (recordId, newStatus) => {
-    // Optimistic update
     setJobs(prev => prev.map(j => j.id === recordId
       ? { ...j, fields: { ...j.fields, status: newStatus } }
       : j
     ))
     try {
-      await fetch(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${AIRTABLE_TABLE_ID}/${recordId}`, {
+      const res = await fetch(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${AIRTABLE_TABLE_ID}/${recordId}`, {
         method: 'PATCH',
         headers: {
           Authorization: `Bearer ${AIRTABLE_API_KEY}`,
@@ -308,11 +319,48 @@ export default function Dashboard() {
         },
         body: JSON.stringify({ fields: { status: newStatus } })
       })
+      if (!res.ok) throw new Error(`Airtable error: ${res.status}`)
     } catch (e) {
       console.error('Failed to update status', e)
-      fetchJobs() // revert on failure
+      fetchJobs()
     }
   }, [fetchJobs])
+
+  const updateStatusBulk = useCallback(async (recordIds, newStatus) => {
+    if (!recordIds.length) return
+    setBulkUpdating(true)
+    setJobs(prev => prev.map(j => recordIds.includes(j.id)
+      ? { ...j, fields: { ...j.fields, status: newStatus } }
+      : j
+    ))
+    try {
+      for (let i = 0; i < recordIds.length; i += 10) {
+        const chunk = recordIds.slice(i, i + 10)
+        const res = await fetch(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${AIRTABLE_TABLE_ID}`, {
+          method: 'PATCH',
+          headers: {
+            Authorization: `Bearer ${AIRTABLE_API_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            records: chunk.map(id => ({ id, fields: { status: newStatus } }))
+          })
+        })
+        if (!res.ok) throw new Error(`Airtable error: ${res.status}`)
+      }
+      setSelectedIds([])
+      setBulkStatus('')
+    } catch (e) {
+      console.error('Failed to bulk update status', e)
+      fetchJobs()
+    } finally {
+      setBulkUpdating(false)
+    }
+  }, [fetchJobs])
+
+  const toggleSelect = useCallback((id) => {
+    setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
+  }, [])
 
   const triggerRun = useCallback(async () => {
     if (!MAKE_WEBHOOK_URL) return
@@ -349,6 +397,18 @@ export default function Dashboard() {
     acc[s] = jobs.filter(j => j.fields.status === s).length
     return acc
   }, {})
+
+  const filteredIds = filtered.map(j => j.id)
+  const allFilteredSelected = filteredIds.length > 0 && filteredIds.every(id => selectedIds.includes(id))
+  const someFilteredSelected = filteredIds.some(id => selectedIds.includes(id))
+
+  const toggleSelectAllFiltered = () => {
+    if (allFilteredSelected) {
+      setSelectedIds(prev => prev.filter(id => !filteredIds.includes(id)))
+    } else {
+      setSelectedIds(prev => [...new Set([...prev, ...filteredIds])])
+    }
+  }
 
   return (
     <>
@@ -517,6 +577,69 @@ export default function Dashboard() {
           </div>
         </div>
 
+        {/* Bulk actions */}
+        {!loading && !error && filtered.length > 0 && (
+          <div style={{
+            background: selectedIds.length > 0 ? '#EEF2FF' : '#fff',
+            border: `1px solid ${selectedIds.length > 0 ? '#C7D2FE' : '#E5E7EB'}`,
+            borderRadius: '12px',
+            padding: '10px 16px',
+            marginBottom: '12px',
+            display: 'flex',
+            gap: '10px',
+            flexWrap: 'wrap',
+            alignItems: 'center',
+          }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: '#374151', cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={allFilteredSelected}
+                ref={el => { if (el) el.indeterminate = someFilteredSelected && !allFilteredSelected }}
+                onChange={toggleSelectAllFiltered}
+                style={{ width: '16px', height: '16px', cursor: 'pointer', accentColor: '#6366F1' }}
+              />
+              Select all shown
+            </label>
+            {selectedIds.length > 0 && (
+              <>
+                <span style={{ fontSize: '13px', fontWeight: '600', color: '#4338CA' }}>
+                  {selectedIds.length} selected
+                </span>
+                <select
+                  value={bulkStatus}
+                  onChange={e => setBulkStatus(e.target.value)}
+                  style={{ border: '1px solid #C7D2FE', borderRadius: '8px', padding: '7px 10px', fontSize: '13px', background: '#fff' }}
+                >
+                  <option value="">Change status to…</option>
+                  {STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+                <button
+                  onClick={() => updateStatusBulk(selectedIds, bulkStatus)}
+                  disabled={!bulkStatus || bulkUpdating}
+                  style={{
+                    background: !bulkStatus || bulkUpdating ? '#E5E7EB' : '#6366F1',
+                    color: !bulkStatus || bulkUpdating ? '#9CA3AF' : '#fff',
+                    border: 'none',
+                    borderRadius: '8px',
+                    padding: '7px 14px',
+                    fontSize: '12px',
+                    fontWeight: '600',
+                    cursor: !bulkStatus || bulkUpdating ? 'default' : 'pointer',
+                  }}
+                >
+                  {bulkUpdating ? 'Updating…' : 'Apply'}
+                </button>
+                <button
+                  onClick={() => { setSelectedIds([]); setBulkStatus('') }}
+                  style={{ background: 'none', border: 'none', color: '#6B7280', fontSize: '12px', cursor: 'pointer' }}
+                >
+                  Clear selection
+                </button>
+              </>
+            )}
+          </div>
+        )}
+
         {/* Job list */}
         {loading && (
           <div style={{ textAlign: 'center', padding: '60px', color: '#9CA3AF' }}>
@@ -534,7 +657,13 @@ export default function Dashboard() {
           </div>
         )}
         {!loading && filtered.map(job => (
-          <JobCard key={job.id} job={job} onStatusChange={updateStatus} />
+          <JobCard
+            key={job.id}
+            job={job}
+            onStatusChange={updateStatus}
+            selected={selectedIds.includes(job.id)}
+            onToggleSelect={toggleSelect}
+          />
         ))}
       </div>
     </>
