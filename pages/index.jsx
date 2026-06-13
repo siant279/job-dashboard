@@ -109,9 +109,45 @@ function StatusBadge({ status, onChange, jobId }) {
   )
 }
 
+function MetaChip({ label, value, accent }) {
+  if (!value && value !== 0) return null
+  return (
+    <span style={{
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: '5px',
+      background: '#F9FAFB',
+      border: '1px solid #E5E7EB',
+      borderRadius: '6px',
+      padding: '4px 8px',
+      fontSize: '12px',
+      color: '#374151',
+      lineHeight: 1.2,
+    }}>
+      <span style={{ fontSize: '10px', fontWeight: '600', color: '#9CA3AF', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+        {label}
+      </span>
+      <span style={{ fontWeight: '600', color: accent || '#374151' }}>{value}</span>
+    </span>
+  )
+}
+
+function formatRemote(value) {
+  if (value === true || value === 'true' || value === 'yes' || value === 'Yes') return 'Remote'
+  if (value === false || value === 'false' || value === 'no' || value === 'No') return 'Onsite'
+  if (typeof value === 'string' && value.trim()) return value
+  return null
+}
+
+function formatSalary(value) {
+  if (!value || value === 'Unknown') return '—'
+  return value
+}
+
 function JobCard({ job, onStatusChange, selected, onToggleSelect }) {
   const [expanded, setExpanded] = useState(false)
   const score = job.fields.fit_score || 0
+  const remoteLabel = formatRemote(job.fields.remote)
 
   return (
     <div style={{
@@ -163,27 +199,21 @@ function JobCard({ job, onStatusChange, selected, onToggleSelect }) {
             >
               {job.fields.title}
             </a>
-            {job.fields.remote && (
-              <span style={{
-                background: '#E0F2FE',
-                color: '#0369A1',
-                border: '1px solid #BAE6FD',
-                borderRadius: '20px',
-                padding: '2px 8px',
-                fontSize: '11px',
-                fontWeight: '600',
-              }}>Remote</span>
-            )}
           </div>
 
-          <div style={{ fontSize: '13px', color: '#6B7280', marginBottom: '6px' }}>
+          <div style={{ fontSize: '13px', color: '#6B7280', marginBottom: '8px' }}>
             <strong style={{ color: '#374151' }}>{job.fields.company}</strong>
-            {job.fields.salary && job.fields.salary !== 'Unknown' && (
-              <span style={{ marginLeft: '10px', color: '#059669', fontWeight: '600' }}>
-                {job.fields.salary}
-              </span>
-            )}
-            <span style={{ marginLeft: '10px' }}>{job.fields.location}</span>
+          </div>
+
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '8px' }}>
+            <MetaChip label="Source" value={job.fields.source || '—'} />
+            <MetaChip label="Salary" value={formatSalary(job.fields.salary)} accent="#059669" />
+            <MetaChip
+              label="Remote"
+              value={remoteLabel || '—'}
+              accent={remoteLabel === 'Remote' ? '#0369A1' : '#374151'}
+            />
+            <MetaChip label="Location" value={job.fields.location || '—'} />
           </div>
 
           {/* Tags */}
@@ -236,10 +266,11 @@ function JobCard({ job, onStatusChange, selected, onToggleSelect }) {
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '8px', flexShrink: 0 }}>
           <FitBadge score={score} label={job.fields.fit_label || ''} />
           <StatusBadge status={job.fields.status || 'new'} onChange={onStatusChange} jobId={job.id} />
-          <div style={{ fontSize: '10px', color: '#D1D5DB' }}>
-            {job.fields.source}
-            {job.fields.posted_days != null && ` · ${job.fields.posted_days}d`}
-          </div>
+          {job.fields.posted_days != null && (
+            <div style={{ fontSize: '10px', color: '#D1D5DB' }}>
+              Posted {job.fields.posted_days}d ago
+            </div>
+          )}
         </div>
       </div>
     </div>
