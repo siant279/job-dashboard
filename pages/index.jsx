@@ -490,6 +490,10 @@ export default function Dashboard() {
     }
   }
 
+  const toggleStatusFilter = (status) => {
+    setFilters(f => ({ ...f, status: f.status === status ? 'all' : status }))
+  }
+
   return (
     <>
       <Head>
@@ -560,24 +564,37 @@ export default function Dashboard() {
         {/* Stats row */}
         <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', marginBottom: '20px' }}>
           {[
-            { label: 'Total', value: jobs.length, color: '#374151' },
-            { label: 'New', value: counts.new || 0, color: STATUS_COLORS.new },
-            { label: 'Saved', value: counts.saved || 0, color: STATUS_COLORS.saved },
-            { label: 'Applied', value: counts.applied || 0, color: STATUS_COLORS.applied },
-            { label: 'Maybe', value: counts.maybe || 0, color: STATUS_COLORS.maybe },
-            { label: "Didn't apply", value: counts["didn't apply"] || 0, color: STATUS_COLORS["didn't apply"] },
-          ].map(({ label, value, color }) => (
-            <div key={label} style={{
-              background: '#fff',
-              border: '1px solid #E5E7EB',
-              borderRadius: '10px',
-              padding: '10px 16px',
-              minWidth: '80px',
-            }}>
-              <div style={{ fontSize: '22px', fontWeight: '800', color, lineHeight: 1 }}>{value}</div>
-              <div style={{ fontSize: '11px', color: '#9CA3AF', marginTop: '2px' }}>{label}</div>
-            </div>
-          ))}
+            { label: 'Total', value: jobs.length, color: '#374151', status: 'all' },
+            { label: 'New', value: counts.new || 0, color: STATUS_COLORS.new, status: 'new' },
+            { label: 'Saved', value: counts.saved || 0, color: STATUS_COLORS.saved, status: 'saved' },
+            { label: 'Applied', value: counts.applied || 0, color: STATUS_COLORS.applied, status: 'applied' },
+            { label: 'Maybe', value: counts.maybe || 0, color: STATUS_COLORS.maybe, status: 'maybe' },
+            { label: "Didn't apply", value: counts["didn't apply"] || 0, color: STATUS_COLORS["didn't apply"], status: "didn't apply" },
+          ].map(({ label, value, color, status }) => {
+            const active = filters.status === status
+            return (
+              <button
+                key={label}
+                type="button"
+                onClick={() => toggleStatusFilter(status)}
+                style={{
+                  background: active ? '#EEF2FF' : '#fff',
+                  border: active ? '2px solid #6366F1' : '1px solid #E5E7EB',
+                  borderRadius: '10px',
+                  padding: '10px 16px',
+                  minWidth: '80px',
+                  cursor: 'pointer',
+                  textAlign: 'left',
+                  transition: 'background 0.15s, border-color 0.15s',
+                }}
+              >
+                <div style={{ fontSize: '22px', fontWeight: '800', color, lineHeight: 1 }}>{value}</div>
+                <div style={{ fontSize: '11px', color: active ? '#4338CA' : '#9CA3AF', marginTop: '2px', fontWeight: active ? '600' : '400' }}>
+                  {label}
+                </div>
+              </button>
+            )
+          })}
         </div>
 
         {/* Filters */}
