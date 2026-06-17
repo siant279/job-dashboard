@@ -144,10 +144,49 @@ function formatSalary(value) {
   return value
 }
 
+function getApplyUrl(fields) {
+  const raw = fields?.apply_url ?? fields?.['Apply URL'] ?? fields?.applyUrl
+  if (!raw) return null
+  if (typeof raw === 'string') {
+    const trimmed = raw.trim()
+    if (!trimmed) return null
+    if (/^https?:\/\//i.test(trimmed)) return trimmed
+    if (trimmed.startsWith('//')) return `https:${trimmed}`
+    return `https://${trimmed}`
+  }
+  if (typeof raw === 'object' && raw.url) {
+    return getApplyUrl({ apply_url: raw.url })
+  }
+  return null
+}
+
+const linkStyle = {
+  color: '#6366F1',
+  textDecoration: 'none',
+  fontWeight: '600',
+}
+
+function ApplyLink({ url, children, style = {} }) {
+  if (!url) return <span style={style}>{children}</span>
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      style={{ ...linkStyle, ...style }}
+      onMouseEnter={e => { e.currentTarget.style.textDecoration = 'underline' }}
+      onMouseLeave={e => { e.currentTarget.style.textDecoration = 'none' }}
+    >
+      {children}
+    </a>
+  )
+}
+
 function JobCard({ job, onStatusChange, selected, onToggleSelect }) {
   const [expanded, setExpanded] = useState(false)
   const score = job.fields.fit_score || 0
   const remoteLabel = formatRemote(job.fields.remote)
+  const applyUrl = getApplyUrl(job.fields)
 
   return (
     <div style={{
@@ -184,21 +223,31 @@ function JobCard({ job, onStatusChange, selected, onToggleSelect }) {
         {/* Main content */}
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '4px' }}>
-            <a
-              href={job.fields.apply_url}
-              target="_blank"
-              rel="noopener noreferrer"
+            <ApplyLink
+              url={applyUrl}
               style={{
                 fontSize: '15px',
                 fontWeight: '700',
-                color: '#111827',
-                textDecoration: 'none',
+                color: applyUrl ? '#111827' : '#374151',
               }}
-              onMouseEnter={e => e.target.style.color = '#6366F1'}
-              onMouseLeave={e => e.target.style.color = '#111827'}
             >
               {job.fields.title}
-            </a>
+            </ApplyLink>
+            {applyUrl && (
+              <ApplyLink
+                url={applyUrl}
+                style={{
+                  fontSize: '12px',
+                  background: '#EEF2FF',
+                  border: '1px solid #C7D2FE',
+                  borderRadius: '6px',
+                  padding: '3px 8px',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                Apply →
+              </ApplyLink>
+            )}
           </div>
 
           <div style={{ fontSize: '13px', color: '#6B7280', marginBottom: '8px' }}>
