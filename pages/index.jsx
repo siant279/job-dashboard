@@ -335,6 +335,7 @@ export default function Dashboard() {
     status: 'all',
     remote: 'all',
     industry: 'all',
+    source: 'all',
     minScore: 0,
     search: '',
   })
@@ -455,6 +456,7 @@ export default function Dashboard() {
 
   // Filter + derived data
   const industries = [...new Set(jobs.map(j => j.fields.industry).filter(Boolean))].sort()
+  const sources = [...new Set(jobs.map(j => j.fields.source).filter(Boolean))].sort()
 
   const filtered = jobs.filter(j => {
     const f = j.fields
@@ -462,6 +464,7 @@ export default function Dashboard() {
     if (filters.remote === 'yes' && !f.remote) return false
     if (filters.remote === 'no' && f.remote) return false
     if (filters.industry !== 'all' && f.industry !== filters.industry) return false
+    if (filters.source !== 'all' && f.source !== filters.source) return false
     if ((f.fit_score || 0) < filters.minScore) return false
     if (filters.search) {
       const q = filters.search.toLowerCase()
@@ -648,6 +651,14 @@ export default function Dashboard() {
             <option value="all">All industries</option>
             {industries.map(i => <option key={i} value={i}>{i}</option>)}
           </select>
+          <select
+            value={filters.source}
+            onChange={e => setFilters(f => ({ ...f, source: e.target.value }))}
+            style={{ border: '1px solid #E5E7EB', borderRadius: '8px', padding: '7px 10px', fontSize: '13px' }}
+          >
+            <option value="all">All sources</option>
+            {sources.map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', color: '#6B7280' }}>
             <span>Min score</span>
             <input
@@ -661,9 +672,9 @@ export default function Dashboard() {
             />
             <span style={{ minWidth: '28px', fontWeight: '600', color: '#374151' }}>{filters.minScore}</span>
           </div>
-          {(filters.status !== 'all' || filters.remote !== 'all' || filters.industry !== 'all' || filters.minScore > 0 || filters.search) && (
+          {(filters.status !== 'all' || filters.remote !== 'all' || filters.industry !== 'all' || filters.source !== 'all' || filters.minScore > 0 || filters.search) && (
             <button
-              onClick={() => setFilters({ status: 'all', remote: 'all', industry: 'all', minScore: 0, search: '' })}
+              onClick={() => setFilters({ status: 'all', remote: 'all', industry: 'all', source: 'all', minScore: 0, search: '' })}
               style={{ background: 'none', border: 'none', color: '#9CA3AF', fontSize: '12px', cursor: 'pointer' }}
             >
               Clear filters
