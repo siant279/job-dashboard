@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-07-13 (end of day)  
 **Repo:** https://github.com/siant279/job-dashboard (public)  
-**Branch:** `main` @ `4883951`  
+**Branch:** `main` @ `5f9be80`  
 **Deploy:** Vercel (auto-deploy from `main`)  
 **Local path:** `dev/job search agent`
 
@@ -131,7 +131,8 @@ Dashboard remaining loop work: **done enough for triage** (status + reasons writ
 4d8319b  Found date display + sort by first_seen
 c1d1572  Sort by company (A–Z / Z–A)
 e4aff47  Status handoff doc
-4883951  Handoff note for company sort   ← HEAD
+4883951  Handoff note for company sort
+5f9be80  End-of-day status finalize   ← HEAD
 
 ## Session closed 2026-07-13
 
