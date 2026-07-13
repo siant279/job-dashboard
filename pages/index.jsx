@@ -544,6 +544,40 @@ function formatSalary(value) {
   return value
 }
 
+function getFirstSeen(fields) {
+  return fields?.first_seen ?? fields?.['First Seen'] ?? fields?.firstSeen ?? null
+}
+
+function parseFirstSeen(value) {
+  if (!value) return null
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value
+  if (typeof value === 'number') {
+    const d = new Date(value)
+    return Number.isNaN(d.getTime()) ? null : d
+  }
+  if (typeof value === 'string') {
+    // Prefer date-only strings as local dates so display doesn't shift a day
+    const dateOnly = value.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+    if (dateOnly) {
+      return new Date(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3]))
+    }
+    const d = new Date(value)
+    return Number.isNaN(d.getTime()) ? null : d
+  }
+  return null
+}
+
+function formatFoundDate(value) {
+  const d = parseFirstSeen(value)
+  if (!d) return '—'
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+function firstSeenTimestamp(fields) {
+  const d = parseFirstSeen(getFirstSeen(fields))
+  return d ? d.getTime() : 0
+}
+
 function getApplyUrl(fields) {
   const raw = fields?.apply_url ?? fields?.['Apply URL'] ?? fields?.applyUrl
   if (!raw) return null
@@ -589,6 +623,7 @@ function JobCard({ job, schema, onStatusChange, onReasonsChange, selected, onTog
   const applyUrl = getApplyUrl(job.fields)
   const status = getStatus(job.fields)
   const reasons = getNotInterestedReasons(job.fields, job.id, schema.reasonField)
+  const foundDate = formatFoundDate(getFirstSeen(job.fields))
 
   return (
     <div style={{
@@ -665,6 +700,7 @@ function JobCard({ job, schema, onStatusChange, onReasonsChange, selected, onTog
               accent={remoteLabel === 'Remote' ? '#0369A1' : '#374151'}
             />
             <MetaChip label="Location" value={job.fields.location || '—'} />
+            <MetaChip label="Found" value={foundDate} />
           </div>
 
           {reasons.length > 0 && (
@@ -735,6 +771,9 @@ function JobCard({ job, schema, onStatusChange, onReasonsChange, selected, onTog
         {/* Right side: fit label */}
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '8px', flexShrink: 0 }}>
           <FitBadge score={score} label={job.fields.fit_label || ''} />
+          <div style={{ fontSize: '10px', color: '#9CA3AF', textAlign: 'right' }}>
+            Found {foundDate}
+          </div>
           {job.fields.posted_days != null && (
             <div style={{ fontSize: '10px', color: '#D1D5DB' }}>
               Posted {job.fields.posted_days}d ago
@@ -760,6 +799,7 @@ export default function Dashboard() {
     minScore: 0,
     search: '',
   })
+  const [sortBy, setSortBy] = useState('fit_desc')
   const [lastRun, setLastRun] = useState(null)
   const [selectedIds, setSelectedIds] = useState([])
   const [bulkStatus, setBulkStatus] = useState('')
@@ -978,6 +1018,13 @@ export default function Dashboard() {
       ) return false
     }
     return true
+  }).slice().sort((a, b) => {
+    if (sortBy === 'found_desc') return firstSeenTimestamp(b.fields) - firstSeenTimestamp(a.fields)
+    if (sortBy === 'found_asc') return firstSeenTimestamp(a.fields) - firstSeenTimestamp(b.fields)
+    // Default: fit score high → low, then newer first as tiebreaker
+    const scoreDiff = (b.fields.fit_score || 0) - (a.fields.fit_score || 0)
+    if (scoreDiff !== 0) return scoreDiff
+    return firstSeenTimestamp(b.fields) - firstSeenTimestamp(a.fields)
   })
 
   const counts = STATUS_VALUES.reduce((acc, s) => {
@@ -1188,6 +1235,15 @@ export default function Dashboard() {
             <option value="all">All reasons</option>
             {reasonOptions.map(r => <option key={r} value={r}>{r}</option>)}
           </select>
+          <select
+            value={sortBy}
+            onChange={e => setSortBy(e.target.value)}
+            style={{ border: '1px solid #E5E7EB', borderRadius: '8px', padding: '7px 10px', fontSize: '13px' }}
+          >
+            <option value="fit_desc">Sort: fit score</option>
+            <option value="found_desc">Sort: found (newest)</option>
+            <option value="found_asc">Sort: found (oldest)</option>
+          </select>
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', color: '#6B7280' }}>
             <span>Min score</span>
             <input
@@ -1201,9 +1257,12 @@ export default function Dashboard() {
             />
             <span style={{ minWidth: '28px', fontWeight: '600', color: '#374151' }}>{filters.minScore}</span>
           </div>
-          {(filters.status !== 'all' || filters.remote !== 'all' || filters.industry !== 'all' || filters.source !== 'all' || filters.reason !== 'all' || filters.minScore > 0 || filters.search) && (
+          {(filters.status !== 'all' || filters.remote !== 'all' || filters.industry !== 'all' || filters.source !== 'all' || filters.reason !== 'all' || filters.minScore > 0 || filters.search || sortBy !== 'fit_desc') && (
             <button
-              onClick={() => setFilters({ status: 'all', remote: 'all', industry: 'all', source: 'all', reason: 'all', minScore: 0, search: '' })}
+              onClick={() => {
+                setFilters({ status: 'all', remote: 'all', industry: 'all', source: 'all', reason: 'all', minScore: 0, search: '' })
+                setSortBy('fit_desc')
+              }}
               style={{ background: 'none', border: 'none', color: '#9CA3AF', fontSize: '12px', cursor: 'pointer' }}
             >
               Clear filters
