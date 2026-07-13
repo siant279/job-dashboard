@@ -14,13 +14,15 @@ const FIT_COLORS = {
 }
 
 const STATUS_OPTIONS = [
-  'New',
-  'Saved',
-  'Applied',
-  'Duplicate',
-  'Not Interested',
-  "didn't apply",
+  { value: 'new', label: 'New' },
+  { value: 'saved', label: 'Saved' },
+  { value: 'applied', label: 'Applied' },
+  { value: 'duplicate', label: 'Duplicate' },
+  { value: 'not interested', label: 'Not interested' },
+  { value: "didn't apply", label: "Didn't apply" },
 ]
+
+const STATUS_VALUES = STATUS_OPTIONS.map(o => o.value)
 
 const NOT_INTERESTED_REASONS = [
   'Too junior',
@@ -34,22 +36,24 @@ const NOT_INTERESTED_REASONS = [
 ]
 
 const STATUS_COLORS = {
+  new: '#6366F1',
+  saved: '#059669',
+  applied: '#0EA5E9',
+  duplicate: '#9CA3AF',
+  'not interested': '#DC2626',
+  "didn't apply": '#64748B',
+  // legacy title-case values still in older records
   New: '#6366F1',
   Saved: '#059669',
   Applied: '#0EA5E9',
   Duplicate: '#9CA3AF',
   'Not Interested': '#DC2626',
-  "didn't apply": '#64748B',
-  // legacy lowercase / retired values still in Airtable
-  new: '#6366F1',
-  saved: '#059669',
-  applied: '#0EA5E9',
   maybe: '#D97706',
   hidden: '#9CA3AF',
 }
 
 function getStatus(fields) {
-  return fields?.Status ?? fields?.status ?? 'New'
+  return fields?.Status ?? fields?.status ?? 'new'
 }
 
 function getNotInterestedReasons(fields) {
@@ -63,8 +67,13 @@ function statusesEqual(a, b) {
   return a === b || a.toLowerCase() === b.toLowerCase()
 }
 
+function statusLabel(value) {
+  const opt = STATUS_OPTIONS.find(o => statusesEqual(o.value, value))
+  return opt?.label ?? value
+}
+
 function isNotInterested(status) {
-  return statusesEqual(status, 'Not Interested')
+  return statusesEqual(status, 'not interested')
 }
 
 function isDimmedStatus(status) {
@@ -242,7 +251,7 @@ function JobStatusControl({ jobId, status, reasons, onStatusChange, onReasonsCha
             cursor: 'pointer',
           }}
         >
-          {status} ▾
+          {statusLabel(status)} ▾
         </button>
         {open && (
           <div style={{
@@ -257,25 +266,25 @@ function JobStatusControl({ jobId, status, reasons, onStatusChange, onReasonsCha
             minWidth: '160px',
             overflow: 'hidden',
           }}>
-            {STATUS_OPTIONS.map(s => (
+            {STATUS_OPTIONS.map(({ value, label }) => (
               <button
-                key={s}
+                key={value}
                 type="button"
-                onClick={() => handleStatusSelect(s)}
+                onClick={() => handleStatusSelect(value)}
                 style={{
                   display: 'block',
                   width: '100%',
                   padding: '8px 14px',
-                  background: statusesEqual(s, status) ? '#F3F4F6' : '#fff',
+                  background: statusesEqual(value, status) ? '#F3F4F6' : '#fff',
                   border: 'none',
                   textAlign: 'left',
                   fontSize: '12px',
                   cursor: 'pointer',
-                  color: STATUS_COLORS[s] || '#374151',
-                  fontWeight: statusesEqual(s, status) ? '700' : '400',
+                  color: STATUS_COLORS[value] || '#374151',
+                  fontWeight: statusesEqual(value, status) ? '700' : '400',
                 }}
               >
-                {s}
+                {label}
               </button>
             ))}
           </div>
@@ -719,19 +728,19 @@ export default function Dashboard() {
     return true
   })
 
-  const counts = STATUS_OPTIONS.reduce((acc, s) => {
+  const counts = STATUS_VALUES.reduce((acc, s) => {
     acc[s] = jobs.filter(j => statusesEqual(getStatus(j.fields), s)).length
     return acc
   }, {})
 
   const STAT_TILES = [
     { label: 'Total', value: jobs.length, color: '#374151', status: 'all' },
-    { label: 'New', value: counts.New || 0, color: STATUS_COLORS.New, status: 'New' },
-    { label: 'Saved', value: counts.Saved || 0, color: STATUS_COLORS.Saved, status: 'Saved' },
-    { label: 'Applied', value: counts.Applied || 0, color: STATUS_COLORS.Applied, status: 'Applied' },
-    { label: 'Duplicate', value: counts.Duplicate || 0, color: STATUS_COLORS.Duplicate, status: 'Duplicate' },
-    { label: 'Not Interested', value: counts['Not Interested'] || 0, color: STATUS_COLORS['Not Interested'], status: 'Not Interested' },
-    { label: "Didn't apply", value: counts["didn't apply"] || 0, color: STATUS_COLORS["didn't apply"], status: "didn't apply" },
+    ...STATUS_OPTIONS.map(({ value, label }) => ({
+      label,
+      value: counts[value] || 0,
+      color: STATUS_COLORS[value],
+      status: value,
+    })),
   ]
 
   const filteredIds = filtered.map(j => j.id)
@@ -892,7 +901,7 @@ export default function Dashboard() {
             style={{ border: '1px solid #E5E7EB', borderRadius: '8px', padding: '7px 10px', fontSize: '13px' }}
           >
             <option value="all">All statuses</option>
-            {STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+            {STATUS_OPTIONS.map(({ value, label }) => <option key={value} value={value}>{label}</option>)}
           </select>
           <select
             value={filters.remote}
@@ -979,7 +988,7 @@ export default function Dashboard() {
                   style={{ border: '1px solid #C7D2FE', borderRadius: '8px', padding: '7px 10px', fontSize: '13px', background: '#fff' }}
                 >
                   <option value="">Change status to…</option>
-                  {STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                  {STATUS_OPTIONS.map(({ value, label }) => <option key={value} value={value}>{label}</option>)}
                 </select>
                 <button
                   onClick={() => updateStatusBulk(selectedIds, bulkStatus)}
