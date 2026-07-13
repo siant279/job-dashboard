@@ -33,15 +33,26 @@ const REASON_FIELD_CANDIDATES = [
 const PENDING_REASONS_KEY = 'job_dashboard_pending_reasons'
 
 const NOT_INTERESTED_REASONS = [
-  'Too junior',
-  'Too senior',
-  'Wrong function',
-  'Not remote',
-  'Comp / stage',
-  'Industry mismatch',
-  'Revenue-primary',
-  'Other',
+  'too junior',
+  'too senior',
+  'wrong function',
+  'not remote',
+  'comp / stage',
+  'industry mismatch',
+  'revenue-primary',
+  'other',
 ]
+
+function normalizeReason(reason) {
+  if (!reason || typeof reason !== 'string') return reason
+  const lower = reason.trim().toLowerCase()
+  const match = NOT_INTERESTED_REASONS.find(r => r === lower)
+  return match || lower
+}
+
+function normalizeReasons(reasons) {
+  return [...new Set((reasons || []).map(normalizeReason).filter(Boolean))]
+}
 
 const STATUS_COLORS = {
   new: '#6366F1',
@@ -82,18 +93,18 @@ function readReasonsFromFields(fields, reasonField) {
   if (!fields) return null
   if (reasonField && fields[reasonField] != null) {
     const raw = fields[reasonField]
-    return Array.isArray(raw) ? raw : [raw]
+    return normalizeReasons(Array.isArray(raw) ? raw : [raw])
   }
   for (const name of REASON_FIELD_CANDIDATES) {
     if (fields[name] != null) {
       const raw = fields[name]
-      return Array.isArray(raw) ? raw : [raw]
+      return normalizeReasons(Array.isArray(raw) ? raw : [raw])
     }
   }
   for (const k of Object.keys(fields)) {
     if (/not[_ ]?interested[_ ]?reason/i.test(k) && fields[k] != null) {
       const raw = fields[k]
-      return Array.isArray(raw) ? raw : [raw]
+      return normalizeReasons(Array.isArray(raw) ? raw : [raw])
     }
   }
   return null
@@ -189,7 +200,7 @@ function buildAirtableFields(status, reasons, schema, reasonFieldOverride) {
   const fields = { [schema.statusField]: airtableStatus }
   const reasonField = reasonFieldOverride ?? schema.reasonField
   if (reasonField) {
-    fields[reasonField] = isNotInterested(status) ? reasons : []
+    fields[reasonField] = isNotInterested(status) ? normalizeReasons(reasons) : []
   }
   return fields
 }
@@ -275,15 +286,16 @@ function ReasonPicker({ reasons, onChange, autoFocus }) {
       }}
     >
       {NOT_INTERESTED_REASONS.map(reason => {
-        const selected = reasons.includes(reason)
+        const selected = reasons.some(r => normalizeReason(r) === reason)
         return (
           <button
             key={reason}
             type="button"
             onClick={() => {
+              const normalized = normalizeReasons(reasons)
               const next = selected
-                ? reasons.filter(r => r !== reason)
-                : [...reasons, reason]
+                ? normalized.filter(r => r !== reason)
+                : [...normalized, reason]
               onChange(next)
             }}
             style={{
@@ -358,7 +370,7 @@ function JobStatusControl({ jobId, status, reasons, onStatusChange, onReasonsCha
   const confirmNotInterested = () => {
     if (draftReasons.length === 0) return
     setAwaitingReasons(false)
-    onStatusChange(jobId, 'not interested', draftReasons)
+    onStatusChange(jobId, 'not interested', normalizeReasons(draftReasons))
   }
 
   const cancelReasonPrompt = () => {
@@ -852,7 +864,7 @@ export default function Dashboard() {
   }, [])
 
   const updateJobStatus = useCallback(async (recordId, newStatus, reasons = []) => {
-    const nextReasons = isNotInterested(newStatus) ? reasons : []
+    const nextReasons = isNotInterested(newStatus) ? normalizeReasons(reasons) : []
     if (isNotInterested(newStatus) && nextReasons.length === 0) return
 
     if (!isNotInterested(newStatus)) clearPendingReasons(recordId)
@@ -870,15 +882,16 @@ export default function Dashboard() {
 
   const updateJobReasons = useCallback((recordId, status, reasons) => {
     if (!isNotInterested(status)) return
-    if (reasons.length === 0) return
-    applyLocalJobUpdate(recordId, status, reasons)
+    const nextReasons = normalizeReasons(reasons)
+    if (nextReasons.length === 0) return
+    applyLocalJobUpdate(recordId, status, nextReasons)
     setSaveError(null)
     clearPendingReasons(recordId)
 
     clearTimeout(reasonDebounceRef.current[recordId])
     reasonDebounceRef.current[recordId] = setTimeout(async () => {
       try {
-        await patchJobToAirtable(recordId, status, reasons)
+        await patchJobToAirtable(recordId, status, nextReasons)
       } catch (e) {
         console.error('Failed to update reasons', e)
         setSaveError(`Could not save reasons: ${e.message}`)
@@ -954,7 +967,7 @@ export default function Dashboard() {
     if (filters.source !== 'all' && f.source !== filters.source) return false
     if (filters.reason !== 'all') {
       const reasons = getNotInterestedReasons(f, j.id, airtableSchema.reasonField)
-      if (!reasons.some(r => r === filters.reason)) return false
+      if (!reasons.some(r => normalizeReason(r) === normalizeReason(filters.reason))) return false
     }
     if ((f.fit_score || 0) < filters.minScore) return false
     if (filters.search) {
