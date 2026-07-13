@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import Head from 'next/head'
 
 const AIRTABLE_API_KEY = process.env.NEXT_PUBLIC_AIRTABLE_API_KEY
@@ -13,15 +13,70 @@ const FIT_COLORS = {
   stretch: { bg: '#FCE4EC', text: '#880E4F', border: '#F48FB1' },
 }
 
-const STATUS_OPTIONS = ['new', 'saved', 'applied', 'maybe', "didn't apply", 'hidden']
+const STATUS_OPTIONS = [
+  'New',
+  'Saved',
+  'Applied',
+  'Duplicate',
+  'Not Interested',
+  "didn't apply",
+]
+
+const NOT_INTERESTED_REASONS = [
+  'Too junior',
+  'Too senior',
+  'Wrong function',
+  'Not remote',
+  'Comp / stage',
+  'Industry mismatch',
+  'Revenue-primary',
+  'Other',
+]
 
 const STATUS_COLORS = {
+  New: '#6366F1',
+  Saved: '#059669',
+  Applied: '#0EA5E9',
+  Duplicate: '#9CA3AF',
+  'Not Interested': '#DC2626',
+  "didn't apply": '#64748B',
+  // legacy lowercase / retired values still in Airtable
   new: '#6366F1',
   saved: '#059669',
   applied: '#0EA5E9',
   maybe: '#D97706',
-  "didn't apply": '#64748B',
   hidden: '#9CA3AF',
+}
+
+function getStatus(fields) {
+  return fields?.Status ?? fields?.status ?? 'New'
+}
+
+function getNotInterestedReasons(fields) {
+  const raw = fields?.['Not Interested Reason'] ?? fields?.not_interested_reason
+  if (!raw) return []
+  return Array.isArray(raw) ? raw : [raw]
+}
+
+function statusesEqual(a, b) {
+  if (!a || !b) return false
+  return a === b || a.toLowerCase() === b.toLowerCase()
+}
+
+function isNotInterested(status) {
+  return statusesEqual(status, 'Not Interested')
+}
+
+function isDimmedStatus(status) {
+  const s = (status || '').toLowerCase()
+  return s === 'duplicate' || s === 'hidden'
+}
+
+function buildAirtableFields(status, reasons = []) {
+  return {
+    Status: status,
+    'Not Interested Reason': isNotInterested(status) ? reasons : [],
+  }
 }
 
 function getFitColor(score) {
@@ -49,61 +104,152 @@ function FitBadge({ score, label }) {
   )
 }
 
-function StatusBadge({ status, onChange, jobId }) {
-  const [open, setOpen] = useState(false)
+function ReasonPicker({ reasons, onChange, autoFocus }) {
+  const containerRef = useRef(null)
+
+  useEffect(() => {
+    if (autoFocus && containerRef.current) containerRef.current.focus()
+  }, [autoFocus])
+
   return (
-    <div style={{ position: 'relative' }}>
-      <button
-        onClick={() => setOpen(!open)}
-        style={{
-          background: STATUS_COLORS[status] || '#9CA3AF',
-          color: '#fff',
-          border: 'none',
-          borderRadius: '20px',
-          padding: '3px 10px',
-          fontSize: '11px',
-          fontWeight: '600',
-          cursor: 'pointer',
-          textTransform: 'capitalize',
-        }}
-      >
-        {status} ▾
-      </button>
-      {open && (
-        <div style={{
-          position: 'absolute',
-          top: '100%',
-          left: 0,
-          background: '#fff',
-          border: '1px solid #E5E7EB',
-          borderRadius: '8px',
-          boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
-          zIndex: 100,
-          minWidth: '120px',
-          overflow: 'hidden',
-        }}>
-          {STATUS_OPTIONS.map(s => (
-            <button
-              key={s}
-              onClick={() => { onChange(jobId, s); setOpen(false) }}
-              style={{
-                display: 'block',
-                width: '100%',
-                padding: '8px 14px',
-                background: s === status ? '#F3F4F6' : '#fff',
-                border: 'none',
-                textAlign: 'left',
-                fontSize: '12px',
-                cursor: 'pointer',
-                color: STATUS_COLORS[s] || '#374151',
-                fontWeight: s === status ? '700' : '400',
-                textTransform: 'capitalize',
-              }}
-            >
-              {s}
-            </button>
-          ))}
-        </div>
+    <div
+      ref={containerRef}
+      tabIndex={-1}
+      style={{
+        display: 'flex',
+        flexWrap: 'wrap',
+        gap: '6px',
+        marginTop: '8px',
+        outline: 'none',
+      }}
+    >
+      {NOT_INTERESTED_REASONS.map(reason => {
+        const selected = reasons.includes(reason)
+        return (
+          <button
+            key={reason}
+            type="button"
+            onClick={() => {
+              const next = selected
+                ? reasons.filter(r => r !== reason)
+                : [...reasons, reason]
+              onChange(next)
+            }}
+            style={{
+              background: selected ? '#FEE2E2' : '#F9FAFB',
+              color: selected ? '#991B1B' : '#374151',
+              border: selected ? '1px solid #FCA5A5' : '1px solid #E5E7EB',
+              borderRadius: '6px',
+              padding: '4px 8px',
+              fontSize: '11px',
+              fontWeight: selected ? '600' : '500',
+              cursor: 'pointer',
+            }}
+          >
+            {reason}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+function JobStatusControl({ jobId, status, reasons, onStatusChange, onReasonsChange }) {
+  const [open, setOpen] = useState(false)
+  const [reasonFocus, setReasonFocus] = useState(false)
+
+  const handleStatusSelect = (newStatus) => {
+    setOpen(false)
+    if (isNotInterested(newStatus)) {
+      setReasonFocus(true)
+      onStatusChange(jobId, newStatus, reasons)
+    } else {
+      setReasonFocus(false)
+      onStatusChange(jobId, newStatus, [])
+    }
+  }
+
+  return (
+    <div style={{ width: '100%', maxWidth: '420px' }}>
+      <div style={{ position: 'relative', display: 'inline-block' }}>
+        <button
+          type="button"
+          onClick={() => setOpen(!open)}
+          style={{
+            background: STATUS_COLORS[status] || '#9CA3AF',
+            color: '#fff',
+            border: 'none',
+            borderRadius: '20px',
+            padding: '3px 10px',
+            fontSize: '11px',
+            fontWeight: '600',
+            cursor: 'pointer',
+          }}
+        >
+          {status} ▾
+        </button>
+        {open && (
+          <div style={{
+            position: 'absolute',
+            top: '100%',
+            left: 0,
+            background: '#fff',
+            border: '1px solid #E5E7EB',
+            borderRadius: '8px',
+            boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
+            zIndex: 100,
+            minWidth: '160px',
+            overflow: 'hidden',
+          }}>
+            {STATUS_OPTIONS.map(s => (
+              <button
+                key={s}
+                type="button"
+                onClick={() => handleStatusSelect(s)}
+                style={{
+                  display: 'block',
+                  width: '100%',
+                  padding: '8px 14px',
+                  background: statusesEqual(s, status) ? '#F3F4F6' : '#fff',
+                  border: 'none',
+                  textAlign: 'left',
+                  fontSize: '12px',
+                  cursor: 'pointer',
+                  color: STATUS_COLORS[s] || '#374151',
+                  fontWeight: statusesEqual(s, status) ? '700' : '400',
+                }}
+              >
+                {s}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {isNotInterested(status) && (
+        <>
+          <ReasonPicker
+            reasons={reasons}
+            onChange={next => onReasonsChange(jobId, status, next)}
+            autoFocus={reasonFocus}
+          />
+          {reasons.length > 0 && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '6px' }}>
+              {reasons.map(r => (
+                <span key={r} style={{
+                  background: '#FEE2E2',
+                  color: '#991B1B',
+                  borderRadius: '4px',
+                  padding: '2px 6px',
+                  fontSize: '10px',
+                  fontWeight: '600',
+                }}>
+                  {r}
+                </span>
+              ))}
+            </div>
+          )}
+        </>
       )}
     </div>
   )
@@ -182,11 +328,13 @@ function ApplyLink({ url, children, style = {} }) {
   )
 }
 
-function JobCard({ job, onStatusChange, selected, onToggleSelect }) {
+function JobCard({ job, onStatusChange, onReasonsChange, selected, onToggleSelect }) {
   const [expanded, setExpanded] = useState(false)
   const score = job.fields.fit_score || 0
   const remoteLabel = formatRemote(job.fields.remote)
   const applyUrl = getApplyUrl(job.fields)
+  const status = getStatus(job.fields)
+  const reasons = getNotInterestedReasons(job.fields)
 
   return (
     <div style={{
@@ -196,7 +344,7 @@ function JobCard({ job, onStatusChange, selected, onToggleSelect }) {
       padding: '16px 20px',
       marginBottom: '8px',
       borderLeft: `4px solid ${getFitColor(score).border}`,
-      opacity: job.fields.status === 'hidden' ? 0.4 : 1,
+      opacity: isDimmedStatus(status) ? 0.55 : 1,
       transition: 'opacity 0.2s, background 0.15s, border-color 0.15s',
     }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', flexWrap: 'wrap' }}>
@@ -309,12 +457,21 @@ function JobCard({ job, onStatusChange, selected, onToggleSelect }) {
               )}
             </div>
           )}
+
+          <div style={{ marginTop: '10px' }}>
+            <JobStatusControl
+              jobId={job.id}
+              status={status}
+              reasons={reasons}
+              onStatusChange={onStatusChange}
+              onReasonsChange={onReasonsChange}
+            />
+          </div>
         </div>
 
-        {/* Right side: status + fit label */}
+        {/* Right side: fit label */}
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '8px', flexShrink: 0 }}>
           <FitBadge score={score} label={job.fields.fit_label || ''} />
-          <StatusBadge status={job.fields.status || 'new'} onChange={onStatusChange} jobId={job.id} />
           {job.fields.posted_days != null && (
             <div style={{ fontSize: '10px', color: '#D1D5DB' }}>
               Posted {job.fields.posted_days}d ago
@@ -343,6 +500,8 @@ export default function Dashboard() {
   const [selectedIds, setSelectedIds] = useState([])
   const [bulkStatus, setBulkStatus] = useState('')
   const [bulkUpdating, setBulkUpdating] = useState(false)
+  const [saveError, setSaveError] = useState(null)
+  const reasonDebounceRef = useRef({})
 
   const fetchJobs = useCallback(async () => {
     setLoading(true)
@@ -386,34 +545,70 @@ export default function Dashboard() {
 
   useEffect(() => { fetchJobs() }, [fetchJobs])
 
-  const updateStatus = useCallback(async (recordId, newStatus) => {
-    setJobs(prev => prev.map(j => j.id === recordId
-      ? { ...j, fields: { ...j.fields, status: newStatus } }
-      : j
-    ))
+  const applyLocalJobUpdate = useCallback((recordId, status, reasons) => {
+    setJobs(prev => prev.map(j => {
+      if (j.id !== recordId) return j
+      const fields = { ...j.fields, Status: status, status }
+      if (isNotInterested(status)) {
+        fields['Not Interested Reason'] = reasons
+      } else {
+        fields['Not Interested Reason'] = []
+      }
+      return { ...j, fields }
+    }))
+  }, [])
+
+  const patchJobToAirtable = useCallback(async (recordId, status, reasons) => {
+    const res = await fetch(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${AIRTABLE_TABLE_ID}/${recordId}`, {
+      method: 'PATCH',
+      headers: {
+        Authorization: `Bearer ${AIRTABLE_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ fields: buildAirtableFields(status, reasons) }),
+    })
+    if (!res.ok) throw new Error(`Airtable error: ${res.status}`)
+  }, [])
+
+  const updateJobStatus = useCallback(async (recordId, newStatus, reasons = []) => {
+    const nextReasons = isNotInterested(newStatus) ? reasons : []
+    applyLocalJobUpdate(recordId, newStatus, nextReasons)
+    setSaveError(null)
     try {
-      const res = await fetch(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${AIRTABLE_TABLE_ID}/${recordId}`, {
-        method: 'PATCH',
-        headers: {
-          Authorization: `Bearer ${AIRTABLE_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ fields: { status: newStatus } })
-      })
-      if (!res.ok) throw new Error(`Airtable error: ${res.status}`)
+      await patchJobToAirtable(recordId, newStatus, nextReasons)
     } catch (e) {
       console.error('Failed to update status', e)
+      setSaveError('Could not save status. Refreshing…')
       fetchJobs()
     }
-  }, [fetchJobs])
+  }, [applyLocalJobUpdate, patchJobToAirtable, fetchJobs])
+
+  const updateJobReasons = useCallback((recordId, status, reasons) => {
+    if (!isNotInterested(status)) return
+    applyLocalJobUpdate(recordId, status, reasons)
+    setSaveError(null)
+    clearTimeout(reasonDebounceRef.current[recordId])
+    reasonDebounceRef.current[recordId] = setTimeout(async () => {
+      try {
+        await patchJobToAirtable(recordId, status, reasons)
+      } catch (e) {
+        console.error('Failed to update reasons', e)
+        setSaveError('Could not save reasons. Refreshing…')
+        fetchJobs()
+      }
+    }, 400)
+  }, [applyLocalJobUpdate, patchJobToAirtable, fetchJobs])
 
   const updateStatusBulk = useCallback(async (recordIds, newStatus) => {
     if (!recordIds.length) return
     setBulkUpdating(true)
-    setJobs(prev => prev.map(j => recordIds.includes(j.id)
-      ? { ...j, fields: { ...j.fields, status: newStatus } }
-      : j
-    ))
+    setSaveError(null)
+    const nextReasons = isNotInterested(newStatus) ? [] : []
+    setJobs(prev => prev.map(j => {
+      if (!recordIds.includes(j.id)) return j
+      const fields = { ...j.fields, Status: newStatus, status: newStatus, 'Not Interested Reason': nextReasons }
+      return { ...j, fields }
+    }))
     try {
       for (let i = 0; i < recordIds.length; i += 10) {
         const chunk = recordIds.slice(i, i + 10)
@@ -424,7 +619,10 @@ export default function Dashboard() {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            records: chunk.map(id => ({ id, fields: { status: newStatus } }))
+            records: chunk.map(id => ({
+              id,
+              fields: buildAirtableFields(newStatus, nextReasons),
+            }))
           })
         })
         if (!res.ok) throw new Error(`Airtable error: ${res.status}`)
@@ -433,6 +631,7 @@ export default function Dashboard() {
       setBulkStatus('')
     } catch (e) {
       console.error('Failed to bulk update status', e)
+      setSaveError('Bulk update failed. Refreshing…')
       fetchJobs()
     } finally {
       setBulkUpdating(false)
@@ -460,7 +659,7 @@ export default function Dashboard() {
 
   const filtered = jobs.filter(j => {
     const f = j.fields
-    if (filters.status !== 'all' && f.status !== filters.status) return false
+    if (filters.status !== 'all' && !statusesEqual(getStatus(f), filters.status)) return false
     if (filters.remote === 'yes' && !f.remote) return false
     if (filters.remote === 'no' && f.remote) return false
     if (filters.industry !== 'all' && f.industry !== filters.industry) return false
@@ -477,9 +676,19 @@ export default function Dashboard() {
   })
 
   const counts = STATUS_OPTIONS.reduce((acc, s) => {
-    acc[s] = jobs.filter(j => j.fields.status === s).length
+    acc[s] = jobs.filter(j => statusesEqual(getStatus(j.fields), s)).length
     return acc
   }, {})
+
+  const STAT_TILES = [
+    { label: 'Total', value: jobs.length, color: '#374151', status: 'all' },
+    { label: 'New', value: counts.New || 0, color: STATUS_COLORS.New, status: 'New' },
+    { label: 'Saved', value: counts.Saved || 0, color: STATUS_COLORS.Saved, status: 'Saved' },
+    { label: 'Applied', value: counts.Applied || 0, color: STATUS_COLORS.Applied, status: 'Applied' },
+    { label: 'Duplicate', value: counts.Duplicate || 0, color: STATUS_COLORS.Duplicate, status: 'Duplicate' },
+    { label: 'Not Interested', value: counts['Not Interested'] || 0, color: STATUS_COLORS['Not Interested'], status: 'Not Interested' },
+    { label: "Didn't apply", value: counts["didn't apply"] || 0, color: STATUS_COLORS["didn't apply"], status: "didn't apply" },
+  ]
 
   const filteredIds = filtered.map(j => j.id)
   const allFilteredSelected = filteredIds.length > 0 && filteredIds.every(id => selectedIds.includes(id))
@@ -564,16 +773,23 @@ export default function Dashboard() {
 
       <div style={{ maxWidth: '1100px', margin: '0 auto', padding: '24px' }}>
 
+        {saveError && (
+          <div style={{
+            background: '#FEF2F2',
+            border: '1px solid #FECACA',
+            borderRadius: '10px',
+            padding: '12px 16px',
+            marginBottom: '16px',
+            color: '#991B1B',
+            fontSize: '13px',
+          }}>
+            {saveError}
+          </div>
+        )}
+
         {/* Stats row */}
         <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', marginBottom: '20px' }}>
-          {[
-            { label: 'Total', value: jobs.length, color: '#374151', status: 'all' },
-            { label: 'New', value: counts.new || 0, color: STATUS_COLORS.new, status: 'new' },
-            { label: 'Saved', value: counts.saved || 0, color: STATUS_COLORS.saved, status: 'saved' },
-            { label: 'Applied', value: counts.applied || 0, color: STATUS_COLORS.applied, status: 'applied' },
-            { label: 'Maybe', value: counts.maybe || 0, color: STATUS_COLORS.maybe, status: 'maybe' },
-            { label: "Didn't apply", value: counts["didn't apply"] || 0, color: STATUS_COLORS["didn't apply"], status: "didn't apply" },
-          ].map(({ label, value, color, status }) => {
+          {STAT_TILES.map(({ label, value, color, status }) => {
             const active = filters.status === status
             return (
               <button
@@ -768,7 +984,8 @@ export default function Dashboard() {
           <JobCard
             key={job.id}
             job={job}
-            onStatusChange={updateStatus}
+            onStatusChange={updateJobStatus}
+            onReasonsChange={updateJobReasons}
             selected={selectedIds.includes(job.id)}
             onToggleSelect={toggleSelect}
           />
