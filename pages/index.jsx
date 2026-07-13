@@ -72,10 +72,66 @@ function isDimmedStatus(status) {
   return s === 'duplicate' || s === 'hidden'
 }
 
-function buildAirtableFields(status, reasons = []) {
+function detectAirtableSchema(records) {
+  const hasStatusCapital = records.some(r => Object.prototype.hasOwnProperty.call(r.fields, 'Status'))
+  const statusField = hasStatusCapital ? 'Status' : 'status'
+  const knownStatuses = [...new Set(records.map(r => getStatus(r.fields)).filter(Boolean))]
   return {
-    Status: status,
-    'Not Interested Reason': isNotInterested(status) ? reasons : [],
+    statusField,
+    // Field exists in base but is omitted from API when empty on a record
+    reasonField: 'Not Interested Reason',
+    knownStatuses,
+  }
+}
+
+function toAirtableStatus(uiStatus, knownStatuses) {
+  const match = knownStatuses.find(s => statusesEqual(s, uiStatus))
+  if (match) return match
+  return uiStatus
+}
+
+function buildAirtableFields(status, reasons, schema) {
+  const airtableStatus = toAirtableStatus(status, schema.knownStatuses)
+  const fields = { [schema.statusField]: airtableStatus }
+  if (schema.reasonField) {
+    fields[schema.reasonField] = isNotInterested(status) ? reasons : []
+  }
+  return fields
+}
+
+async function airtablePatch(recordId, fields) {
+  const url = new URL(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${AIRTABLE_TABLE_ID}/${recordId}`)
+  url.searchParams.set('typecast', 'true')
+  const res = await fetch(url.toString(), {
+    method: 'PATCH',
+    headers: {
+      Authorization: `Bearer ${AIRTABLE_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ fields }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    const msg = err.error?.message || err.error?.type || `HTTP ${res.status}`
+    throw new Error(msg)
+  }
+}
+
+async function airtablePatchBatch(records) {
+  const url = new URL(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${AIRTABLE_TABLE_ID}`)
+  url.searchParams.set('typecast', 'true')
+  const res = await fetch(url.toString(), {
+    method: 'PATCH',
+    headers: {
+      Authorization: `Bearer ${AIRTABLE_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ records }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    const msg = err.error?.message || err.error?.type || `HTTP ${res.status}`
+    throw new Error(msg)
   }
 }
 
@@ -502,6 +558,7 @@ export default function Dashboard() {
   const [bulkUpdating, setBulkUpdating] = useState(false)
   const [saveError, setSaveError] = useState(null)
   const reasonDebounceRef = useRef({})
+  const schemaRef = useRef({ statusField: 'status', reasonField: 'Not Interested Reason', knownStatuses: [] })
 
   const fetchJobs = useCallback(async () => {
     setLoading(true)
@@ -526,6 +583,7 @@ export default function Dashboard() {
       } while (offset)
 
       setJobs(allRecords)
+      schemaRef.current = detectAirtableSchema(allRecords)
 
       // Get last run date from most recent first_seen
       if (allRecords.length > 0) {
@@ -546,28 +604,22 @@ export default function Dashboard() {
   useEffect(() => { fetchJobs() }, [fetchJobs])
 
   const applyLocalJobUpdate = useCallback((recordId, status, reasons) => {
+    const { statusField, reasonField } = schemaRef.current
     setJobs(prev => prev.map(j => {
       if (j.id !== recordId) return j
-      const fields = { ...j.fields, Status: status, status }
-      if (isNotInterested(status)) {
-        fields['Not Interested Reason'] = reasons
-      } else {
-        fields['Not Interested Reason'] = []
+      const fields = { ...j.fields, [statusField]: status }
+      if (statusField === 'Status') fields.status = status
+      if (statusField === 'status') fields.Status = status
+      if (reasonField) {
+        fields[reasonField] = isNotInterested(status) ? reasons : []
       }
       return { ...j, fields }
     }))
   }, [])
 
   const patchJobToAirtable = useCallback(async (recordId, status, reasons) => {
-    const res = await fetch(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${AIRTABLE_TABLE_ID}/${recordId}`, {
-      method: 'PATCH',
-      headers: {
-        Authorization: `Bearer ${AIRTABLE_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ fields: buildAirtableFields(status, reasons) }),
-    })
-    if (!res.ok) throw new Error(`Airtable error: ${res.status}`)
+    const fields = buildAirtableFields(status, reasons, schemaRef.current)
+    await airtablePatch(recordId, fields)
   }, [])
 
   const updateJobStatus = useCallback(async (recordId, newStatus, reasons = []) => {
@@ -578,7 +630,7 @@ export default function Dashboard() {
       await patchJobToAirtable(recordId, newStatus, nextReasons)
     } catch (e) {
       console.error('Failed to update status', e)
-      setSaveError('Could not save status. Refreshing…')
+      setSaveError(`Could not save status: ${e.message}`)
       fetchJobs()
     }
   }, [applyLocalJobUpdate, patchJobToAirtable, fetchJobs])
@@ -593,7 +645,7 @@ export default function Dashboard() {
         await patchJobToAirtable(recordId, status, reasons)
       } catch (e) {
         console.error('Failed to update reasons', e)
-        setSaveError('Could not save reasons. Refreshing…')
+        setSaveError(`Could not save reasons: ${e.message}`)
         fetchJobs()
       }
     }, 400)
@@ -606,32 +658,24 @@ export default function Dashboard() {
     const nextReasons = isNotInterested(newStatus) ? [] : []
     setJobs(prev => prev.map(j => {
       if (!recordIds.includes(j.id)) return j
-      const fields = { ...j.fields, Status: newStatus, status: newStatus, 'Not Interested Reason': nextReasons }
+      const { statusField, reasonField } = schemaRef.current
+      const fields = { ...j.fields, [statusField]: newStatus }
+      if (reasonField) fields[reasonField] = nextReasons
       return { ...j, fields }
     }))
     try {
       for (let i = 0; i < recordIds.length; i += 10) {
         const chunk = recordIds.slice(i, i + 10)
-        const res = await fetch(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${AIRTABLE_TABLE_ID}`, {
-          method: 'PATCH',
-          headers: {
-            Authorization: `Bearer ${AIRTABLE_API_KEY}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            records: chunk.map(id => ({
-              id,
-              fields: buildAirtableFields(newStatus, nextReasons),
-            }))
-          })
-        })
-        if (!res.ok) throw new Error(`Airtable error: ${res.status}`)
+        await airtablePatchBatch(chunk.map(id => ({
+          id,
+          fields: buildAirtableFields(newStatus, nextReasons, schemaRef.current),
+        })))
       }
       setSelectedIds([])
       setBulkStatus('')
     } catch (e) {
       console.error('Failed to bulk update status', e)
-      setSaveError('Bulk update failed. Refreshing…')
+      setSaveError(`Bulk update failed: ${e.message}`)
       fetchJobs()
     } finally {
       setBulkUpdating(false)
