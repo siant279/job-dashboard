@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-07-13  
 **Repo:** https://github.com/siant279/job-dashboard (public)  
-**Branch:** `main` @ `4d8319b`  
+**Branch:** `main` @ `c1d1572`  
 **Deploy:** Vercel (auto-deploy from `main`)  
 **Local path:** `dev/job search agent`
 
@@ -67,7 +67,7 @@ If a candidate works, the app caches that field name. If none work, status still
 ### Filters & sort
 - Clickable status count tiles → filter
 - Search (title/company), status, remote, industry, **source**, **reason**, min score
-- Sort: fit score (default) | found newest | found oldest (`first_seen`)
+- Sort: fit score (default) | found newest | found oldest (`first_seen`) | company A–Z | company Z–A
 
 ### Bulk actions
 - Multi-select + select all shown
