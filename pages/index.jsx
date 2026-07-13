@@ -1021,6 +1021,16 @@ export default function Dashboard() {
   }).slice().sort((a, b) => {
     if (sortBy === 'found_desc') return firstSeenTimestamp(b.fields) - firstSeenTimestamp(a.fields)
     if (sortBy === 'found_asc') return firstSeenTimestamp(a.fields) - firstSeenTimestamp(b.fields)
+    if (sortBy === 'company_asc') {
+      const cmp = (a.fields.company || '').localeCompare(b.fields.company || '', undefined, { sensitivity: 'base' })
+      if (cmp !== 0) return cmp
+      return (b.fields.fit_score || 0) - (a.fields.fit_score || 0)
+    }
+    if (sortBy === 'company_desc') {
+      const cmp = (b.fields.company || '').localeCompare(a.fields.company || '', undefined, { sensitivity: 'base' })
+      if (cmp !== 0) return cmp
+      return (b.fields.fit_score || 0) - (a.fields.fit_score || 0)
+    }
     // Default: fit score high → low, then newer first as tiebreaker
     const scoreDiff = (b.fields.fit_score || 0) - (a.fields.fit_score || 0)
     if (scoreDiff !== 0) return scoreDiff
@@ -1243,6 +1253,8 @@ export default function Dashboard() {
             <option value="fit_desc">Sort: fit score</option>
             <option value="found_desc">Sort: found (newest)</option>
             <option value="found_asc">Sort: found (oldest)</option>
+            <option value="company_asc">Sort: company (A–Z)</option>
+            <option value="company_desc">Sort: company (Z–A)</option>
           </select>
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', color: '#6B7280' }}>
             <span>Min score</span>
