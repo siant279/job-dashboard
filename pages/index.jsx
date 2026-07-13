@@ -64,9 +64,27 @@ function getStatus(fields) {
   return fields?.Status ?? fields?.status ?? 'new'
 }
 
+function findReasonFieldName(records, metaSchema) {
+  if (metaSchema?.reasonField) return metaSchema.reasonField
+  for (const r of records) {
+    for (const k of Object.keys(r.fields)) {
+      if (/not interested reason/i.test(k)) return k
+    }
+  }
+  for (const name of REASON_FIELD_CANDIDATES) {
+    if (records.some(rec => Object.prototype.hasOwnProperty.call(rec.fields, name))) return name
+  }
+  // Field exists in base but is omitted from record payloads when empty
+  return 'Not Interested Reason'
+}
+
 function getNotInterestedReasons(fields, recordId, reasonField) {
-  if (reasonField && fields?.[reasonField] != null) {
-    const raw = fields[reasonField]
+  if (reasonField) {
+    const raw = fields?.[reasonField]
+    if (raw == null) {
+      const pending = getPendingReasons(recordId)
+      return pending.length ? pending : []
+    }
     return Array.isArray(raw) ? raw : [raw]
   }
   return getPendingReasons(recordId)
@@ -108,10 +126,7 @@ function statusLabel(value) {
 }
 
 function detectReasonFieldFromRecords(records) {
-  for (const name of REASON_FIELD_CANDIDATES) {
-    if (records.some(r => Object.prototype.hasOwnProperty.call(r.fields, name))) return name
-  }
-  return null
+  return findReasonFieldName(records, null)
 }
 
 async function fetchAirtableMetaSchema() {
@@ -124,27 +139,19 @@ async function fetchAirtableMetaSchema() {
     const table = data.tables?.find(t => t.id === AIRTABLE_TABLE_ID)
     if (!table) return null
     const statusField = table.fields.find(f => f.name === 'Status' || f.name === 'status')?.name ?? 'status'
-    const reasonField = table.fields.find(f =>
-      REASON_FIELD_CANDIDATES.some(c => c.toLowerCase() === f.name.toLowerCase())
-    )?.name ?? null
-    return { statusField, reasonField }
+    const reasonField = table.fields.find(f => /not interested reason/i.test(f.name))?.name ?? null
+    return { statusField, reasonField, fields: table.fields }
   } catch {
     return null
   }
 }
 
 function detectAirtableSchema(records, metaSchema) {
-  const fromRecords = {
-    statusField: records.some(r => Object.prototype.hasOwnProperty.call(r.fields, 'Status')) ? 'Status' : 'status',
-    reasonField: detectReasonFieldFromRecords(records),
-    knownStatuses: [...new Set(records.map(r => getStatus(r.fields)).filter(Boolean))],
-  }
-  if (!metaSchema) return fromRecords
-  return {
-    statusField: metaSchema.statusField || fromRecords.statusField,
-    reasonField: metaSchema.reasonField ?? fromRecords.reasonField,
-    knownStatuses: fromRecords.knownStatuses,
-  }
+  const statusField = metaSchema?.statusField
+    ?? (records.some(r => Object.prototype.hasOwnProperty.call(r.fields, 'Status')) ? 'Status' : 'status')
+  const reasonField = findReasonFieldName(records, metaSchema)
+  const knownStatuses = [...new Set(records.map(r => getStatus(r.fields)).filter(Boolean))]
+  return { statusField, reasonField, knownStatuses }
 }
 
 function isNotInterested(status) {
@@ -282,23 +289,71 @@ function ReasonPicker({ reasons, onChange, autoFocus }) {
   )
 }
 
-function JobStatusControl({ jobId, status, reasons, reasonFieldAvailable, onStatusChange, onReasonsChange }) {
+function ReasonTags({ reasons, style = {} }) {
+  if (!reasons.length) return null
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', ...style }}>
+      {reasons.map(r => (
+        <span key={r} style={{
+          background: '#FEE2E2',
+          color: '#991B1B',
+          border: '1px solid #FCA5A5',
+          borderRadius: '4px',
+          padding: '2px 8px',
+          fontSize: '11px',
+          fontWeight: '600',
+        }}>
+          {r}
+        </span>
+      ))}
+    </div>
+  )
+}
+
+function JobStatusControl({ jobId, status, reasons, onStatusChange, onReasonsChange }) {
   const [open, setOpen] = useState(false)
-  const [reasonFocus, setReasonFocus] = useState(false)
+  const [awaitingReasons, setAwaitingReasons] = useState(false)
+  const [draftReasons, setDraftReasons] = useState([])
+
+  const needsReasons = isNotInterested(status) && reasons.length === 0
+  const showReasonPrompt = awaitingReasons || needsReasons
+
+  useEffect(() => {
+    if (needsReasons) setAwaitingReasons(true)
+  }, [needsReasons])
 
   const handleStatusSelect = (newStatus) => {
     setOpen(false)
     if (isNotInterested(newStatus)) {
-      setReasonFocus(true)
-      onStatusChange(jobId, newStatus, reasons)
+      if (reasons.length > 0) {
+        setAwaitingReasons(false)
+        onStatusChange(jobId, newStatus, reasons)
+      } else {
+        setAwaitingReasons(true)
+        setDraftReasons([])
+      }
     } else {
-      setReasonFocus(false)
+      setAwaitingReasons(false)
+      setDraftReasons([])
       onStatusChange(jobId, newStatus, [])
     }
   }
 
+  const confirmNotInterested = () => {
+    if (draftReasons.length === 0) return
+    setAwaitingReasons(false)
+    onStatusChange(jobId, 'not interested', draftReasons)
+  }
+
+  const cancelReasonPrompt = () => {
+    setAwaitingReasons(false)
+    setDraftReasons([])
+  }
+
+  const activeDraft = awaitingReasons ? draftReasons : reasons
+
   return (
-    <div style={{ width: '100%', maxWidth: '420px' }}>
+    <div style={{ width: '100%', maxWidth: '480px' }}>
       <div style={{ position: 'relative', display: 'inline-block' }}>
         <button
           type="button"
@@ -354,45 +409,73 @@ function JobStatusControl({ jobId, status, reasons, reasonFieldAvailable, onStat
         )}
       </div>
 
-      {isNotInterested(status) && (
-        <>
-          {!reasonFieldAvailable && (
-            <p style={{
-              fontSize: '11px',
-              color: '#92400E',
-              marginTop: '8px',
-              background: '#FFFBEB',
-              border: '1px solid #FDE68A',
-              padding: '6px 8px',
-              borderRadius: '6px',
-              lineHeight: 1.4,
-            }}>
-              Pick reasons below — they save on this device for now. Add a multi-select field named{' '}
-              <strong>Not Interested Reason</strong> in Airtable to sync them.
-            </p>
+      {showReasonPrompt && (
+        <div style={{
+          marginTop: '10px',
+          background: '#FEF2F2',
+          border: '2px solid #FCA5A5',
+          borderRadius: '10px',
+          padding: '12px',
+        }}>
+          <p style={{ fontSize: '13px', fontWeight: '700', color: '#991B1B', marginBottom: '4px' }}>
+            Select at least one reason
+          </p>
+          <p style={{ fontSize: '12px', color: '#B91C1C', marginBottom: '10px' }}>
+            Required before saving &quot;not interested&quot; — this feeds the learning loop.
+          </p>
+          <ReasonPicker
+            reasons={activeDraft}
+            onChange={next => {
+              if (awaitingReasons) setDraftReasons(next)
+              else onReasonsChange(jobId, status, next)
+            }}
+            autoFocus
+          />
+          {awaitingReasons && (
+            <div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}>
+              <button
+                type="button"
+                onClick={confirmNotInterested}
+                disabled={draftReasons.length === 0}
+                style={{
+                  background: draftReasons.length === 0 ? '#E5E7EB' : '#DC2626',
+                  color: draftReasons.length === 0 ? '#9CA3AF' : '#fff',
+                  border: 'none',
+                  borderRadius: '8px',
+                  padding: '7px 14px',
+                  fontSize: '12px',
+                  fontWeight: '600',
+                  cursor: draftReasons.length === 0 ? 'default' : 'pointer',
+                }}
+              >
+                Save not interested
+              </button>
+              <button
+                type="button"
+                onClick={cancelReasonPrompt}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: '#6B7280',
+                  fontSize: '12px',
+                  cursor: 'pointer',
+                }}
+              >
+                Cancel
+              </button>
+            </div>
           )}
+        </div>
+      )}
+
+      {isNotInterested(status) && reasons.length > 0 && !showReasonPrompt && (
+        <div style={{ marginTop: '8px' }}>
+          <div style={{ fontSize: '11px', color: '#6B7280', marginBottom: '4px' }}>Update reasons:</div>
           <ReasonPicker
             reasons={reasons}
             onChange={next => onReasonsChange(jobId, status, next)}
-            autoFocus={reasonFocus}
           />
-          {reasons.length > 0 && (
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '6px' }}>
-              {reasons.map(r => (
-                <span key={r} style={{
-                  background: '#FEE2E2',
-                  color: '#991B1B',
-                  borderRadius: '4px',
-                  padding: '2px 6px',
-                  fontSize: '10px',
-                  fontWeight: '600',
-                }}>
-                  {r}
-                </span>
-              ))}
-            </div>
-          )}
-        </>
+        </div>
       )}
     </div>
   )
@@ -478,7 +561,6 @@ function JobCard({ job, schema, onStatusChange, onReasonsChange, selected, onTog
   const applyUrl = getApplyUrl(job.fields)
   const status = getStatus(job.fields)
   const reasons = getNotInterestedReasons(job.fields, job.id, schema.reasonField)
-  const reasonFieldAvailable = Boolean(schema.reasonField)
 
   return (
     <div style={{
@@ -557,6 +639,15 @@ function JobCard({ job, schema, onStatusChange, onReasonsChange, selected, onTog
             <MetaChip label="Location" value={job.fields.location || '—'} />
           </div>
 
+          {reasons.length > 0 && (
+            <div style={{ marginBottom: '8px' }}>
+              <div style={{ fontSize: '10px', fontWeight: '600', color: '#9CA3AF', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '4px' }}>
+                not interested reason
+              </div>
+              <ReasonTags reasons={reasons} />
+            </div>
+          )}
+
           {/* Tags */}
           {job.fields.tags && (
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginBottom: '6px' }}>
@@ -607,7 +698,6 @@ function JobCard({ job, schema, onStatusChange, onReasonsChange, selected, onTog
               jobId={job.id}
               status={status}
               reasons={reasons}
-              reasonFieldAvailable={reasonFieldAvailable}
               onStatusChange={onStatusChange}
               onReasonsChange={onReasonsChange}
             />
@@ -646,9 +736,9 @@ export default function Dashboard() {
   const [bulkStatus, setBulkStatus] = useState('')
   const [bulkUpdating, setBulkUpdating] = useState(false)
   const [saveError, setSaveError] = useState(null)
-  const [airtableSchema, setAirtableSchema] = useState({ statusField: 'status', reasonField: null, knownStatuses: [] })
+  const [airtableSchema, setAirtableSchema] = useState({ statusField: 'status', reasonField: 'Not Interested Reason', knownStatuses: [] })
   const reasonDebounceRef = useRef({})
-  const schemaRef = useRef({ statusField: 'status', reasonField: null, knownStatuses: [] })
+  const schemaRef = useRef({ statusField: 'status', reasonField: 'Not Interested Reason', knownStatuses: [] })
 
   const fetchJobs = useCallback(async () => {
     setLoading(true)
@@ -717,14 +807,14 @@ export default function Dashboard() {
 
   const updateJobStatus = useCallback(async (recordId, newStatus, reasons = []) => {
     const nextReasons = isNotInterested(newStatus) ? reasons : []
+    if (isNotInterested(newStatus) && nextReasons.length === 0) return
+
     if (!isNotInterested(newStatus)) clearPendingReasons(recordId)
     applyLocalJobUpdate(recordId, newStatus, nextReasons)
     setSaveError(null)
     try {
       await patchJobToAirtable(recordId, newStatus, nextReasons)
-      if (isNotInterested(newStatus) && !schemaRef.current.reasonField && nextReasons.length > 0) {
-        setPendingReasons(recordId, nextReasons)
-      }
+      clearPendingReasons(recordId)
     } catch (e) {
       console.error('Failed to update status', e)
       setSaveError(`Could not save status: ${e.message}`)
@@ -734,13 +824,10 @@ export default function Dashboard() {
 
   const updateJobReasons = useCallback((recordId, status, reasons) => {
     if (!isNotInterested(status)) return
+    if (reasons.length === 0) return
     applyLocalJobUpdate(recordId, status, reasons)
     setSaveError(null)
-
-    if (!schemaRef.current.reasonField) {
-      setPendingReasons(recordId, reasons)
-      return
-    }
+    clearPendingReasons(recordId)
 
     clearTimeout(reasonDebounceRef.current[recordId])
     reasonDebounceRef.current[recordId] = setTimeout(async () => {
@@ -756,6 +843,10 @@ export default function Dashboard() {
 
   const updateStatusBulk = useCallback(async (recordIds, newStatus) => {
     if (!recordIds.length) return
+    if (isNotInterested(newStatus)) {
+      setSaveError('Use the job card to set "not interested" — a reason is required for each job.')
+      return
+    }
     setBulkUpdating(true)
     setSaveError(null)
     const nextReasons = isNotInterested(newStatus) ? [] : []
@@ -1082,7 +1173,9 @@ export default function Dashboard() {
                   style={{ border: '1px solid #C7D2FE', borderRadius: '8px', padding: '7px 10px', fontSize: '13px', background: '#fff' }}
                 >
                   <option value="">Change status to…</option>
-                  {STATUS_OPTIONS.map(({ value, label }) => <option key={value} value={value}>{label}</option>)}
+                  {STATUS_OPTIONS.filter(o => !isNotInterested(o.value)).map(({ value, label }) => (
+                    <option key={value} value={value}>{label}</option>
+                  ))}
                 </select>
                 <button
                   onClick={() => updateStatusBulk(selectedIds, bulkStatus)}
