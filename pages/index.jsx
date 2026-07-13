@@ -25,9 +25,9 @@ const STATUS_OPTIONS = [
 const STATUS_VALUES = STATUS_OPTIONS.map(o => o.value)
 
 const REASON_FIELD_CANDIDATES = [
-  'Not Interested Reason',
-  'not interested reason',
   'not_interested_reason',
+  'not interested reason',
+  'Not Interested Reason',
 ]
 
 const PENDING_REASONS_KEY = 'job_dashboard_pending_reasons'
@@ -68,25 +68,40 @@ function findReasonFieldName(records, metaSchema) {
   if (metaSchema?.reasonField) return metaSchema.reasonField
   for (const r of records) {
     for (const k of Object.keys(r.fields)) {
-      if (/not interested reason/i.test(k)) return k
+      if (/not[_ ]?interested[_ ]?reason/i.test(k)) return k
     }
   }
   for (const name of REASON_FIELD_CANDIDATES) {
     if (records.some(rec => Object.prototype.hasOwnProperty.call(rec.fields, name))) return name
   }
-  // Field exists in base but is omitted from record payloads when empty
-  return 'Not Interested Reason'
+  // Prefer snake_case — matches other dashboard field names (apply_url, fit_score, status)
+  return 'not_interested_reason'
+}
+
+function readReasonsFromFields(fields, reasonField) {
+  if (!fields) return null
+  if (reasonField && fields[reasonField] != null) {
+    const raw = fields[reasonField]
+    return Array.isArray(raw) ? raw : [raw]
+  }
+  for (const name of REASON_FIELD_CANDIDATES) {
+    if (fields[name] != null) {
+      const raw = fields[name]
+      return Array.isArray(raw) ? raw : [raw]
+    }
+  }
+  for (const k of Object.keys(fields)) {
+    if (/not[_ ]?interested[_ ]?reason/i.test(k) && fields[k] != null) {
+      const raw = fields[k]
+      return Array.isArray(raw) ? raw : [raw]
+    }
+  }
+  return null
 }
 
 function getNotInterestedReasons(fields, recordId, reasonField) {
-  if (reasonField) {
-    const raw = fields?.[reasonField]
-    if (raw == null) {
-      const pending = getPendingReasons(recordId)
-      return pending.length ? pending : []
-    }
-    return Array.isArray(raw) ? raw : [raw]
-  }
+  const fromAirtable = readReasonsFromFields(fields, reasonField)
+  if (fromAirtable != null) return fromAirtable
   return getPendingReasons(recordId)
 }
 
@@ -139,7 +154,7 @@ async function fetchAirtableMetaSchema() {
     const table = data.tables?.find(t => t.id === AIRTABLE_TABLE_ID)
     if (!table) return null
     const statusField = table.fields.find(f => f.name === 'Status' || f.name === 'status')?.name ?? 'status'
-    const reasonField = table.fields.find(f => /not interested reason/i.test(f.name))?.name ?? null
+    const reasonField = table.fields.find(f => /not[_ ]?interested[_ ]?reason/i.test(f.name))?.name ?? null
     return { statusField, reasonField, fields: table.fields }
   } catch {
     return null
@@ -169,11 +184,12 @@ function toAirtableStatus(uiStatus, knownStatuses) {
   return uiStatus
 }
 
-function buildAirtableFields(status, reasons, schema) {
+function buildAirtableFields(status, reasons, schema, reasonFieldOverride) {
   const airtableStatus = toAirtableStatus(status, schema.knownStatuses)
   const fields = { [schema.statusField]: airtableStatus }
-  if (schema.reasonField) {
-    fields[schema.reasonField] = isNotInterested(status) ? reasons : []
+  const reasonField = reasonFieldOverride ?? schema.reasonField
+  if (reasonField) {
+    fields[reasonField] = isNotInterested(status) ? reasons : []
   }
   return fields
 }
@@ -728,6 +744,7 @@ export default function Dashboard() {
     remote: 'all',
     industry: 'all',
     source: 'all',
+    reason: 'all',
     minScore: 0,
     search: '',
   })
@@ -736,9 +753,9 @@ export default function Dashboard() {
   const [bulkStatus, setBulkStatus] = useState('')
   const [bulkUpdating, setBulkUpdating] = useState(false)
   const [saveError, setSaveError] = useState(null)
-  const [airtableSchema, setAirtableSchema] = useState({ statusField: 'status', reasonField: 'Not Interested Reason', knownStatuses: [] })
+  const [airtableSchema, setAirtableSchema] = useState({ statusField: 'status', reasonField: 'not_interested_reason', knownStatuses: [] })
   const reasonDebounceRef = useRef({})
-  const schemaRef = useRef({ statusField: 'status', reasonField: 'Not Interested Reason', knownStatuses: [] })
+  const schemaRef = useRef({ statusField: 'status', reasonField: 'not_interested_reason', knownStatuses: [] })
 
   const fetchJobs = useCallback(async () => {
     setLoading(true)
@@ -801,8 +818,37 @@ export default function Dashboard() {
   }, [])
 
   const patchJobToAirtable = useCallback(async (recordId, status, reasons) => {
-    const fields = buildAirtableFields(status, reasons, schemaRef.current)
-    await airtablePatch(recordId, fields)
+    const schema = schemaRef.current
+    const namesToTry = [
+      schema.reasonField,
+      ...REASON_FIELD_CANDIDATES.filter(n => n !== schema.reasonField),
+    ].filter(Boolean)
+
+    let lastError = null
+    for (let i = 0; i < namesToTry.length; i++) {
+      const reasonField = namesToTry[i]
+      try {
+        await airtablePatch(recordId, buildAirtableFields(status, reasons, schema, reasonField))
+        if (reasonField !== schema.reasonField) {
+          schemaRef.current = { ...schema, reasonField }
+          setAirtableSchema(prev => ({ ...prev, reasonField }))
+        }
+        return
+      } catch (e) {
+        lastError = e
+        const unknownReason = /unknown field name/i.test(e.message) && /not.?interested.?reason/i.test(e.message)
+        if (!unknownReason) throw e
+      }
+    }
+
+    // Last resort: save status only so status changes aren't blocked
+    try {
+      await airtablePatch(recordId, { [schema.statusField]: toAirtableStatus(status, schema.knownStatuses) })
+      if (isNotInterested(status) && reasons.length) setPendingReasons(recordId, reasons)
+      setSaveError(`Status saved, but could not find the reason field in Airtable (tried: ${namesToTry.join(', ')}). Check the exact field name.`)
+    } catch (e) {
+      throw lastError || e
+    }
   }, [])
 
   const updateJobStatus = useCallback(async (recordId, newStatus, reasons = []) => {
@@ -894,6 +940,10 @@ export default function Dashboard() {
   // Filter + derived data
   const industries = [...new Set(jobs.map(j => j.fields.industry).filter(Boolean))].sort()
   const sources = [...new Set(jobs.map(j => j.fields.source).filter(Boolean))].sort()
+  const reasonOptions = [...new Set([
+    ...NOT_INTERESTED_REASONS,
+    ...jobs.flatMap(j => getNotInterestedReasons(j.fields, j.id, airtableSchema.reasonField)),
+  ])].sort()
 
   const filtered = jobs.filter(j => {
     const f = j.fields
@@ -902,6 +952,10 @@ export default function Dashboard() {
     if (filters.remote === 'no' && f.remote) return false
     if (filters.industry !== 'all' && f.industry !== filters.industry) return false
     if (filters.source !== 'all' && f.source !== filters.source) return false
+    if (filters.reason !== 'all') {
+      const reasons = getNotInterestedReasons(f, j.id, airtableSchema.reasonField)
+      if (!reasons.some(r => r === filters.reason)) return false
+    }
     if ((f.fit_score || 0) < filters.minScore) return false
     if (filters.search) {
       const q = filters.search.toLowerCase()
@@ -1113,6 +1167,14 @@ export default function Dashboard() {
             <option value="all">All sources</option>
             {sources.map(s => <option key={s} value={s}>{s}</option>)}
           </select>
+          <select
+            value={filters.reason}
+            onChange={e => setFilters(f => ({ ...f, reason: e.target.value }))}
+            style={{ border: '1px solid #E5E7EB', borderRadius: '8px', padding: '7px 10px', fontSize: '13px' }}
+          >
+            <option value="all">All reasons</option>
+            {reasonOptions.map(r => <option key={r} value={r}>{r}</option>)}
+          </select>
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', color: '#6B7280' }}>
             <span>Min score</span>
             <input
@@ -1126,9 +1188,9 @@ export default function Dashboard() {
             />
             <span style={{ minWidth: '28px', fontWeight: '600', color: '#374151' }}>{filters.minScore}</span>
           </div>
-          {(filters.status !== 'all' || filters.remote !== 'all' || filters.industry !== 'all' || filters.source !== 'all' || filters.minScore > 0 || filters.search) && (
+          {(filters.status !== 'all' || filters.remote !== 'all' || filters.industry !== 'all' || filters.source !== 'all' || filters.reason !== 'all' || filters.minScore > 0 || filters.search) && (
             <button
-              onClick={() => setFilters({ status: 'all', remote: 'all', industry: 'all', source: 'all', minScore: 0, search: '' })}
+              onClick={() => setFilters({ status: 'all', remote: 'all', industry: 'all', source: 'all', reason: 'all', minScore: 0, search: '' })}
               style={{ background: 'none', border: 'none', color: '#9CA3AF', fontSize: '12px', cursor: 'pointer' }}
             >
               Clear filters
