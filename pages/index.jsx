@@ -14,15 +14,23 @@ const FIT_COLORS = {
 }
 
 const STATUS_OPTIONS = [
-  { value: 'new', label: 'New' },
-  { value: 'saved', label: 'Saved' },
-  { value: 'applied', label: 'Applied' },
-  { value: 'duplicate', label: 'Duplicate' },
-  { value: 'not interested', label: 'Not interested' },
-  { value: "didn't apply", label: "Didn't apply" },
+  { value: 'new', label: 'new' },
+  { value: 'saved', label: 'saved' },
+  { value: 'applied', label: 'applied' },
+  { value: 'duplicate', label: 'duplicate' },
+  { value: 'not interested', label: 'not interested' },
+  { value: "didn't apply", label: "didn't apply" },
 ]
 
 const STATUS_VALUES = STATUS_OPTIONS.map(o => o.value)
+
+const REASON_FIELD_CANDIDATES = [
+  'Not Interested Reason',
+  'not interested reason',
+  'not_interested_reason',
+]
+
+const PENDING_REASONS_KEY = 'job_dashboard_pending_reasons'
 
 const NOT_INTERESTED_REASONS = [
   'Too junior',
@@ -56,10 +64,36 @@ function getStatus(fields) {
   return fields?.Status ?? fields?.status ?? 'new'
 }
 
-function getNotInterestedReasons(fields) {
-  const raw = fields?.['Not Interested Reason'] ?? fields?.not_interested_reason
-  if (!raw) return []
-  return Array.isArray(raw) ? raw : [raw]
+function getNotInterestedReasons(fields, recordId, reasonField) {
+  if (reasonField && fields?.[reasonField] != null) {
+    const raw = fields[reasonField]
+    return Array.isArray(raw) ? raw : [raw]
+  }
+  return getPendingReasons(recordId)
+}
+
+function getPendingReasons(recordId) {
+  if (typeof window === 'undefined') return []
+  try {
+    const all = JSON.parse(localStorage.getItem(PENDING_REASONS_KEY) || '{}')
+    return all[recordId] || []
+  } catch {
+    return []
+  }
+}
+
+function setPendingReasons(recordId, reasons) {
+  if (typeof window === 'undefined') return
+  try {
+    const all = JSON.parse(localStorage.getItem(PENDING_REASONS_KEY) || '{}')
+    if (reasons.length === 0) delete all[recordId]
+    else all[recordId] = reasons
+    localStorage.setItem(PENDING_REASONS_KEY, JSON.stringify(all))
+  } catch { /* ignore */ }
+}
+
+function clearPendingReasons(recordId) {
+  setPendingReasons(recordId, [])
 }
 
 function statusesEqual(a, b) {
@@ -69,7 +103,48 @@ function statusesEqual(a, b) {
 
 function statusLabel(value) {
   const opt = STATUS_OPTIONS.find(o => statusesEqual(o.value, value))
-  return opt?.label ?? value
+  if (opt) return opt.label
+  return (value || 'new').toLowerCase()
+}
+
+function detectReasonFieldFromRecords(records) {
+  for (const name of REASON_FIELD_CANDIDATES) {
+    if (records.some(r => Object.prototype.hasOwnProperty.call(r.fields, name))) return name
+  }
+  return null
+}
+
+async function fetchAirtableMetaSchema() {
+  try {
+    const res = await fetch(`https://api.airtable.com/v0/meta/bases/${AIRTABLE_BASE_ID}/tables`, {
+      headers: { Authorization: `Bearer ${AIRTABLE_API_KEY}` },
+    })
+    if (!res.ok) return null
+    const data = await res.json()
+    const table = data.tables?.find(t => t.id === AIRTABLE_TABLE_ID)
+    if (!table) return null
+    const statusField = table.fields.find(f => f.name === 'Status' || f.name === 'status')?.name ?? 'status'
+    const reasonField = table.fields.find(f =>
+      REASON_FIELD_CANDIDATES.some(c => c.toLowerCase() === f.name.toLowerCase())
+    )?.name ?? null
+    return { statusField, reasonField }
+  } catch {
+    return null
+  }
+}
+
+function detectAirtableSchema(records, metaSchema) {
+  const fromRecords = {
+    statusField: records.some(r => Object.prototype.hasOwnProperty.call(r.fields, 'Status')) ? 'Status' : 'status',
+    reasonField: detectReasonFieldFromRecords(records),
+    knownStatuses: [...new Set(records.map(r => getStatus(r.fields)).filter(Boolean))],
+  }
+  if (!metaSchema) return fromRecords
+  return {
+    statusField: metaSchema.statusField || fromRecords.statusField,
+    reasonField: metaSchema.reasonField ?? fromRecords.reasonField,
+    knownStatuses: fromRecords.knownStatuses,
+  }
 }
 
 function isNotInterested(status) {
@@ -79,18 +154,6 @@ function isNotInterested(status) {
 function isDimmedStatus(status) {
   const s = (status || '').toLowerCase()
   return s === 'duplicate' || s === 'hidden'
-}
-
-function detectAirtableSchema(records) {
-  const hasStatusCapital = records.some(r => Object.prototype.hasOwnProperty.call(r.fields, 'Status'))
-  const statusField = hasStatusCapital ? 'Status' : 'status'
-  const knownStatuses = [...new Set(records.map(r => getStatus(r.fields)).filter(Boolean))]
-  return {
-    statusField,
-    // Field exists in base but is omitted from API when empty on a record
-    reasonField: 'Not Interested Reason',
-    knownStatuses,
-  }
 }
 
 function toAirtableStatus(uiStatus, knownStatuses) {
@@ -219,7 +282,7 @@ function ReasonPicker({ reasons, onChange, autoFocus }) {
   )
 }
 
-function JobStatusControl({ jobId, status, reasons, onStatusChange, onReasonsChange }) {
+function JobStatusControl({ jobId, status, reasons, reasonFieldAvailable, onStatusChange, onReasonsChange }) {
   const [open, setOpen] = useState(false)
   const [reasonFocus, setReasonFocus] = useState(false)
 
@@ -293,6 +356,21 @@ function JobStatusControl({ jobId, status, reasons, onStatusChange, onReasonsCha
 
       {isNotInterested(status) && (
         <>
+          {!reasonFieldAvailable && (
+            <p style={{
+              fontSize: '11px',
+              color: '#92400E',
+              marginTop: '8px',
+              background: '#FFFBEB',
+              border: '1px solid #FDE68A',
+              padding: '6px 8px',
+              borderRadius: '6px',
+              lineHeight: 1.4,
+            }}>
+              Pick reasons below — they save on this device for now. Add a multi-select field named{' '}
+              <strong>Not Interested Reason</strong> in Airtable to sync them.
+            </p>
+          )}
           <ReasonPicker
             reasons={reasons}
             onChange={next => onReasonsChange(jobId, status, next)}
@@ -393,13 +471,14 @@ function ApplyLink({ url, children, style = {} }) {
   )
 }
 
-function JobCard({ job, onStatusChange, onReasonsChange, selected, onToggleSelect }) {
+function JobCard({ job, schema, onStatusChange, onReasonsChange, selected, onToggleSelect }) {
   const [expanded, setExpanded] = useState(false)
   const score = job.fields.fit_score || 0
   const remoteLabel = formatRemote(job.fields.remote)
   const applyUrl = getApplyUrl(job.fields)
   const status = getStatus(job.fields)
-  const reasons = getNotInterestedReasons(job.fields)
+  const reasons = getNotInterestedReasons(job.fields, job.id, schema.reasonField)
+  const reasonFieldAvailable = Boolean(schema.reasonField)
 
   return (
     <div style={{
@@ -528,6 +607,7 @@ function JobCard({ job, onStatusChange, onReasonsChange, selected, onToggleSelec
               jobId={job.id}
               status={status}
               reasons={reasons}
+              reasonFieldAvailable={reasonFieldAvailable}
               onStatusChange={onStatusChange}
               onReasonsChange={onReasonsChange}
             />
@@ -566,8 +646,9 @@ export default function Dashboard() {
   const [bulkStatus, setBulkStatus] = useState('')
   const [bulkUpdating, setBulkUpdating] = useState(false)
   const [saveError, setSaveError] = useState(null)
+  const [airtableSchema, setAirtableSchema] = useState({ statusField: 'status', reasonField: null, knownStatuses: [] })
   const reasonDebounceRef = useRef({})
-  const schemaRef = useRef({ statusField: 'status', reasonField: 'Not Interested Reason', knownStatuses: [] })
+  const schemaRef = useRef({ statusField: 'status', reasonField: null, knownStatuses: [] })
 
   const fetchJobs = useCallback(async () => {
     setLoading(true)
@@ -592,7 +673,10 @@ export default function Dashboard() {
       } while (offset)
 
       setJobs(allRecords)
-      schemaRef.current = detectAirtableSchema(allRecords)
+      const metaSchema = await fetchAirtableMetaSchema()
+      const schema = detectAirtableSchema(allRecords, metaSchema)
+      schemaRef.current = schema
+      setAirtableSchema(schema)
 
       // Get last run date from most recent first_seen
       if (allRecords.length > 0) {
@@ -633,10 +717,14 @@ export default function Dashboard() {
 
   const updateJobStatus = useCallback(async (recordId, newStatus, reasons = []) => {
     const nextReasons = isNotInterested(newStatus) ? reasons : []
+    if (!isNotInterested(newStatus)) clearPendingReasons(recordId)
     applyLocalJobUpdate(recordId, newStatus, nextReasons)
     setSaveError(null)
     try {
       await patchJobToAirtable(recordId, newStatus, nextReasons)
+      if (isNotInterested(newStatus) && !schemaRef.current.reasonField && nextReasons.length > 0) {
+        setPendingReasons(recordId, nextReasons)
+      }
     } catch (e) {
       console.error('Failed to update status', e)
       setSaveError(`Could not save status: ${e.message}`)
@@ -648,6 +736,12 @@ export default function Dashboard() {
     if (!isNotInterested(status)) return
     applyLocalJobUpdate(recordId, status, reasons)
     setSaveError(null)
+
+    if (!schemaRef.current.reasonField) {
+      setPendingReasons(recordId, reasons)
+      return
+    }
+
     clearTimeout(reasonDebounceRef.current[recordId])
     reasonDebounceRef.current[recordId] = setTimeout(async () => {
       try {
@@ -1037,6 +1131,7 @@ export default function Dashboard() {
           <JobCard
             key={job.id}
             job={job}
+            schema={airtableSchema}
             onStatusChange={updateJobStatus}
             onReasonsChange={updateJobReasons}
             selected={selectedIds.includes(job.id)}
