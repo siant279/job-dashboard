@@ -54,7 +54,7 @@ Forced flow: choosing **not interested** opens a prompt; at least one reason req
 Lowercase reason options (must match Airtable multi-select):
 
 - `too junior`, `too senior`, `wrong function`, `not remote`
-- `comp / stage`, `industry mismatch`, `revenue-primary`, `other`
+- `comp/stage`, `industry mismatch`, `revenue-primary`, `other`
 
 Reason field name candidates tried in order:
 

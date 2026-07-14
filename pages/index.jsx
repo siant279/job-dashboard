@@ -37,7 +37,7 @@ const NOT_INTERESTED_REASONS = [
   'too senior',
   'wrong function',
   'not remote',
-  'comp / stage',
+  'comp/stage',
   'industry mismatch',
   'revenue-primary',
   'other',
@@ -45,7 +45,7 @@ const NOT_INTERESTED_REASONS = [
 
 function normalizeReason(reason) {
   if (!reason || typeof reason !== 'string') return reason
-  const lower = reason.trim().toLowerCase()
+  const lower = reason.trim().toLowerCase().replace(/\s*\/\s*/g, '/')
   const match = NOT_INTERESTED_REASONS.find(r => r === lower)
   return match || lower
 }
