@@ -544,6 +544,40 @@ function formatSalary(value) {
   return value
 }
 
+function parseSalaryMinFromString(value) {
+  if (!value || typeof value !== 'string') return null
+  const text = value.toLowerCase().replace(/,/g, '')
+  if (!text || text === 'unknown' || text === '—' || text === '-') return null
+
+  // Match amounts like $150k, 150000, $140K+, 140-160k
+  const matches = [...text.matchAll(/\$?\s*(\d+(?:\.\d+)?)\s*(k)?/gi)]
+  if (!matches.length) return null
+
+  const amounts = matches.map(m => {
+    const n = Number(m[1])
+    if (Number.isNaN(n)) return null
+    return m[2] ? Math.round(n * 1000) : Math.round(n)
+  }).filter(n => n != null && n >= 1000) // ignore tiny numbers like "2" in "2 years"
+
+  if (!amounts.length) return null
+  return Math.min(...amounts)
+}
+
+function getSalaryMin(fields) {
+  const raw = fields?.salary_min ?? fields?.salaryMin ?? fields?.['Salary Min']
+  if (typeof raw === 'number' && !Number.isNaN(raw) && raw > 0) return raw
+  if (typeof raw === 'string' && raw.trim() && raw !== 'null') {
+    const n = Number(raw)
+    if (!Number.isNaN(n) && n > 0) return n
+  }
+  return parseSalaryMinFromString(fields?.salary)
+}
+
+function salarySortValue(fields) {
+  const min = getSalaryMin(fields)
+  return min == null ? -1 : min
+}
+
 function getFirstSeen(fields) {
   return fields?.first_seen ?? fields?.['First Seen'] ?? fields?.firstSeen ?? null
 }
@@ -796,6 +830,7 @@ export default function Dashboard() {
     industry: 'all',
     source: 'all',
     reason: 'all',
+    minSalary: 'all',
     minScore: 0,
     search: '',
   })
@@ -1041,6 +1076,13 @@ export default function Dashboard() {
       const reasons = getNotInterestedReasons(f, j.id, airtableSchema.reasonField)
       if (!reasons.some(r => normalizeReason(r) === normalizeReason(filters.reason))) return false
     }
+    if (filters.minSalary === 'known') {
+      if (getSalaryMin(f) == null) return false
+    } else if (filters.minSalary !== 'all') {
+      const floor = Number(filters.minSalary)
+      const min = getSalaryMin(f)
+      if (min == null || min < floor) return false
+    }
     if ((f.fit_score || 0) < filters.minScore) return false
     if (filters.search) {
       const q = filters.search.toLowerCase()
@@ -1061,6 +1103,18 @@ export default function Dashboard() {
     if (sortBy === 'company_desc') {
       const cmp = (b.fields.company || '').localeCompare(a.fields.company || '', undefined, { sensitivity: 'base' })
       if (cmp !== 0) return cmp
+      return (b.fields.fit_score || 0) - (a.fields.fit_score || 0)
+    }
+    if (sortBy === 'salary_desc' || sortBy === 'salary_asc') {
+      const aSal = salarySortValue(a.fields)
+      const bSal = salarySortValue(b.fields)
+      const aUnknown = aSal < 0
+      const bUnknown = bSal < 0
+      if (aUnknown && bUnknown) return (b.fields.fit_score || 0) - (a.fields.fit_score || 0)
+      if (aUnknown) return 1
+      if (bUnknown) return -1
+      const diff = sortBy === 'salary_desc' ? bSal - aSal : aSal - bSal
+      if (diff !== 0) return diff
       return (b.fields.fit_score || 0) - (a.fields.fit_score || 0)
     }
     // Default: fit score high → low, then newer first as tiebreaker
@@ -1278,11 +1332,27 @@ export default function Dashboard() {
             {reasonOptions.map(r => <option key={r} value={r}>{r}</option>)}
           </select>
           <select
+            value={filters.minSalary}
+            onChange={e => setFilters(f => ({ ...f, minSalary: e.target.value }))}
+            style={{ border: '1px solid #E5E7EB', borderRadius: '8px', padding: '7px 10px', fontSize: '13px' }}
+          >
+            <option value="all">All salaries</option>
+            <option value="known">Salary known</option>
+            <option value="100000">Min $100k</option>
+            <option value="120000">Min $120k</option>
+            <option value="140000">Min $140k</option>
+            <option value="160000">Min $160k</option>
+            <option value="180000">Min $180k</option>
+            <option value="200000">Min $200k</option>
+          </select>
+          <select
             value={sortBy}
             onChange={e => setSortBy(e.target.value)}
             style={{ border: '1px solid #E5E7EB', borderRadius: '8px', padding: '7px 10px', fontSize: '13px' }}
           >
             <option value="fit_desc">Sort: fit score</option>
+            <option value="salary_desc">Sort: salary (high → low)</option>
+            <option value="salary_asc">Sort: salary (low → high)</option>
             <option value="found_desc">Sort: found (newest)</option>
             <option value="found_asc">Sort: found (oldest)</option>
             <option value="company_asc">Sort: company (A–Z)</option>
@@ -1301,10 +1371,10 @@ export default function Dashboard() {
             />
             <span style={{ minWidth: '28px', fontWeight: '600', color: '#374151' }}>{filters.minScore}</span>
           </div>
-          {(filters.status !== 'all' || filters.remote !== 'all' || filters.industry !== 'all' || filters.source !== 'all' || filters.reason !== 'all' || filters.minScore > 0 || filters.search || sortBy !== 'fit_desc') && (
+          {(filters.status !== 'all' || filters.remote !== 'all' || filters.industry !== 'all' || filters.source !== 'all' || filters.reason !== 'all' || filters.minSalary !== 'all' || filters.minScore > 0 || filters.search || sortBy !== 'fit_desc') && (
             <button
               onClick={() => {
-                setFilters({ status: 'all', remote: 'all', industry: 'all', source: 'all', reason: 'all', minScore: 0, search: '' })
+                setFilters({ status: 'all', remote: 'all', industry: 'all', source: 'all', reason: 'all', minSalary: 'all', minScore: 0, search: '' })
                 setSortBy('fit_desc')
               }}
               style={{ background: 'none', border: 'none', color: '#9CA3AF', fontSize: '12px', cursor: 'pointer' }}

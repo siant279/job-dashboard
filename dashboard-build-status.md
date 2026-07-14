@@ -67,7 +67,8 @@ If a candidate works, the app caches that field name. If none work, status still
 ### Filters & sort
 - Clickable status count tiles → filter
 - Search (title/company), status, remote, industry, **source**, **reason**, min score
-- Sort: fit score (default) | found newest | found oldest (`first_seen`) | company A–Z | company Z–A
+- Sort: fit score (default) | salary high/low | found newest/oldest (`first_seen`) | company A–Z / Z–A
+- Salary filter: known only, or min $100k / $120k / $140k / $160k / $180k / $200k (uses `salary_min` or parses the salary string)
 
 ### Bulk actions
 - Multi-select + select all shown
