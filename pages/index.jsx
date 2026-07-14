@@ -830,7 +830,8 @@ export default function Dashboard() {
     industry: 'all',
     source: 'all',
     reason: 'all',
-    minSalary: 'all',
+    salaryMin: 'all',
+    salaryMax: 'all',
     minScore: 0,
     search: '',
   })
@@ -1076,12 +1077,16 @@ export default function Dashboard() {
       const reasons = getNotInterestedReasons(f, j.id, airtableSchema.reasonField)
       if (!reasons.some(r => normalizeReason(r) === normalizeReason(filters.reason))) return false
     }
-    if (filters.minSalary === 'known') {
-      if (getSalaryMin(f) == null) return false
-    } else if (filters.minSalary !== 'all') {
-      const floor = Number(filters.minSalary)
+    if (filters.salaryMin === 'known' || filters.salaryMax !== 'all' || (filters.salaryMin !== 'all' && filters.salaryMin !== 'known')) {
       const min = getSalaryMin(f)
-      if (min == null || min < floor) return false
+      if (filters.salaryMin === 'known') {
+        if (min == null) return false
+      } else if (filters.salaryMin !== 'all') {
+        if (min == null || min < Number(filters.salaryMin)) return false
+      }
+      if (filters.salaryMax !== 'all') {
+        if (min == null || min >= Number(filters.salaryMax)) return false
+      }
     }
     if ((f.fit_score || 0) < filters.minScore) return false
     if (filters.search) {
@@ -1332,18 +1337,32 @@ export default function Dashboard() {
             {reasonOptions.map(r => <option key={r} value={r}>{r}</option>)}
           </select>
           <select
-            value={filters.minSalary}
-            onChange={e => setFilters(f => ({ ...f, minSalary: e.target.value }))}
+            value={filters.salaryMin}
+            onChange={e => setFilters(f => ({ ...f, salaryMin: e.target.value }))}
             style={{ border: '1px solid #E5E7EB', borderRadius: '8px', padding: '7px 10px', fontSize: '13px' }}
           >
-            <option value="all">All salaries</option>
+            <option value="all">Salary min: any</option>
             <option value="known">Salary known</option>
-            <option value="100000">Min $100k</option>
-            <option value="120000">Min $120k</option>
-            <option value="140000">Min $140k</option>
-            <option value="160000">Min $160k</option>
-            <option value="180000">Min $180k</option>
-            <option value="200000">Min $200k</option>
+            <option value="100000">At least $100k</option>
+            <option value="120000">At least $120k</option>
+            <option value="140000">At least $140k</option>
+            <option value="160000">At least $160k</option>
+            <option value="180000">At least $180k</option>
+            <option value="200000">At least $200k</option>
+          </select>
+          <select
+            value={filters.salaryMax}
+            onChange={e => setFilters(f => ({ ...f, salaryMax: e.target.value }))}
+            style={{ border: '1px solid #E5E7EB', borderRadius: '8px', padding: '7px 10px', fontSize: '13px' }}
+          >
+            <option value="all">Salary max: any</option>
+            <option value="100000">Less than $100k</option>
+            <option value="120000">Less than $120k</option>
+            <option value="140000">Less than $140k</option>
+            <option value="160000">Less than $160k</option>
+            <option value="180000">Less than $180k</option>
+            <option value="200000">Less than $200k</option>
+            <option value="250000">Less than $250k</option>
           </select>
           <select
             value={sortBy}
@@ -1371,10 +1390,10 @@ export default function Dashboard() {
             />
             <span style={{ minWidth: '28px', fontWeight: '600', color: '#374151' }}>{filters.minScore}</span>
           </div>
-          {(filters.status !== 'all' || filters.remote !== 'all' || filters.industry !== 'all' || filters.source !== 'all' || filters.reason !== 'all' || filters.minSalary !== 'all' || filters.minScore > 0 || filters.search || sortBy !== 'fit_desc') && (
+          {(filters.status !== 'all' || filters.remote !== 'all' || filters.industry !== 'all' || filters.source !== 'all' || filters.reason !== 'all' || filters.salaryMin !== 'all' || filters.salaryMax !== 'all' || filters.minScore > 0 || filters.search || sortBy !== 'fit_desc') && (
             <button
               onClick={() => {
-                setFilters({ status: 'all', remote: 'all', industry: 'all', source: 'all', reason: 'all', minSalary: 'all', minScore: 0, search: '' })
+                setFilters({ status: 'all', remote: 'all', industry: 'all', source: 'all', reason: 'all', salaryMin: 'all', salaryMax: 'all', minScore: 0, search: '' })
                 setSortBy('fit_desc')
               }}
               style={{ background: 'none', border: 'none', color: '#9CA3AF', fontSize: '12px', cursor: 'pointer' }}
