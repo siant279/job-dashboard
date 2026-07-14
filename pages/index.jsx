@@ -803,6 +803,7 @@ export default function Dashboard() {
   const [lastRun, setLastRun] = useState(null)
   const [selectedIds, setSelectedIds] = useState([])
   const [bulkStatus, setBulkStatus] = useState('')
+  const [bulkReasons, setBulkReasons] = useState([])
   const [bulkUpdating, setBulkUpdating] = useState(false)
   const [saveError, setSaveError] = useState(null)
   const [airtableSchema, setAirtableSchema] = useState({ statusField: 'status', reasonField: 'not_interested_reason', knownStatuses: [] })
@@ -940,32 +941,63 @@ export default function Dashboard() {
     }, 400)
   }, [applyLocalJobUpdate, patchJobToAirtable, fetchJobs])
 
-  const updateStatusBulk = useCallback(async (recordIds, newStatus) => {
-    if (!recordIds.length) return
-    if (isNotInterested(newStatus)) {
-      setSaveError('Use the job card to set "not interested" — a reason is required for each job.')
+  const patchRecordsBulk = useCallback(async (recordIds, newStatus, reasons) => {
+    const schema = schemaRef.current
+    const nextReasons = normalizeReasons(reasons)
+    const namesToTry = [
+      schema.reasonField,
+      ...REASON_FIELD_CANDIDATES.filter(n => n !== schema.reasonField),
+    ].filter(Boolean)
+
+    let lastError = null
+    for (const reasonField of namesToTry) {
+      try {
+        for (let i = 0; i < recordIds.length; i += 10) {
+          const chunk = recordIds.slice(i, i + 10)
+          await airtablePatchBatch(chunk.map(id => ({
+            id,
+            fields: buildAirtableFields(newStatus, nextReasons, schema, reasonField),
+          })))
+        }
+        if (reasonField !== schema.reasonField) {
+          schemaRef.current = { ...schema, reasonField }
+          setAirtableSchema(prev => ({ ...prev, reasonField }))
+        }
+        return
+      } catch (e) {
+        lastError = e
+        const unknownReason = /unknown field name/i.test(e.message) && /not.?interested.?reason/i.test(e.message)
+        if (!unknownReason) throw e
+      }
+    }
+    throw lastError || new Error('Bulk update failed')
+  }, [])
+
+  const updateStatusBulk = useCallback(async (recordIds, newStatus, reasons = []) => {
+    if (!recordIds.length || !newStatus) return
+    const nextReasons = isNotInterested(newStatus) ? normalizeReasons(reasons) : []
+    if (isNotInterested(newStatus) && nextReasons.length === 0) {
+      setSaveError('Select at least one not interested reason before applying bulk update.')
       return
     }
+
     setBulkUpdating(true)
     setSaveError(null)
-    const nextReasons = isNotInterested(newStatus) ? [] : []
     setJobs(prev => prev.map(j => {
       if (!recordIds.includes(j.id)) return j
       const { statusField, reasonField } = schemaRef.current
       const fields = { ...j.fields, [statusField]: newStatus }
+      if (statusField === 'Status') fields.status = newStatus
+      if (statusField === 'status') fields.Status = newStatus
       if (reasonField) fields[reasonField] = nextReasons
       return { ...j, fields }
     }))
     try {
-      for (let i = 0; i < recordIds.length; i += 10) {
-        const chunk = recordIds.slice(i, i + 10)
-        await airtablePatchBatch(chunk.map(id => ({
-          id,
-          fields: buildAirtableFields(newStatus, nextReasons, schemaRef.current),
-        })))
-      }
+      await patchRecordsBulk(recordIds, newStatus, nextReasons)
+      recordIds.forEach(id => clearPendingReasons(id))
       setSelectedIds([])
       setBulkStatus('')
+      setBulkReasons([])
     } catch (e) {
       console.error('Failed to bulk update status', e)
       setSaveError(`Bulk update failed: ${e.message}`)
@@ -973,7 +1005,7 @@ export default function Dashboard() {
     } finally {
       setBulkUpdating(false)
     }
-  }, [fetchJobs])
+  }, [fetchJobs, patchRecordsBulk])
 
   const toggleSelect = useCallback((id) => {
     setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
@@ -1315,32 +1347,74 @@ export default function Dashboard() {
                 </span>
                 <select
                   value={bulkStatus}
-                  onChange={e => setBulkStatus(e.target.value)}
+                  onChange={e => {
+                    const next = e.target.value
+                    setBulkStatus(next)
+                    if (!isNotInterested(next)) setBulkReasons([])
+                  }}
                   style={{ border: '1px solid #C7D2FE', borderRadius: '8px', padding: '7px 10px', fontSize: '13px', background: '#fff' }}
                 >
                   <option value="">Change status to…</option>
-                  {STATUS_OPTIONS.filter(o => !isNotInterested(o.value)).map(({ value, label }) => (
+                  {STATUS_OPTIONS.map(({ value, label }) => (
                     <option key={value} value={value}>{label}</option>
                   ))}
                 </select>
+                {isNotInterested(bulkStatus) && (
+                  <div style={{
+                    width: '100%',
+                    background: '#FEF2F2',
+                    border: '1px solid #FCA5A5',
+                    borderRadius: '10px',
+                    padding: '10px 12px',
+                  }}>
+                    <div style={{ fontSize: '12px', fontWeight: '700', color: '#991B1B', marginBottom: '6px' }}>
+                      Select not interested reason(s) for all selected jobs
+                    </div>
+                    <ReasonPicker
+                      reasons={bulkReasons}
+                      onChange={setBulkReasons}
+                    />
+                    {bulkReasons.length === 0 && (
+                      <div style={{ fontSize: '11px', color: '#B91C1C', marginTop: '6px' }}>
+                        At least one reason is required
+                      </div>
+                    )}
+                  </div>
+                )}
                 <button
-                  onClick={() => updateStatusBulk(selectedIds, bulkStatus)}
-                  disabled={!bulkStatus || bulkUpdating}
+                  onClick={() => updateStatusBulk(selectedIds, bulkStatus, bulkReasons)}
+                  disabled={
+                    !bulkStatus
+                    || bulkUpdating
+                    || (isNotInterested(bulkStatus) && bulkReasons.length === 0)
+                  }
                   style={{
-                    background: !bulkStatus || bulkUpdating ? '#E5E7EB' : '#6366F1',
-                    color: !bulkStatus || bulkUpdating ? '#9CA3AF' : '#fff',
+                    background: (
+                      !bulkStatus
+                      || bulkUpdating
+                      || (isNotInterested(bulkStatus) && bulkReasons.length === 0)
+                    ) ? '#E5E7EB' : '#6366F1',
+                    color: (
+                      !bulkStatus
+                      || bulkUpdating
+                      || (isNotInterested(bulkStatus) && bulkReasons.length === 0)
+                    ) ? '#9CA3AF' : '#fff',
                     border: 'none',
                     borderRadius: '8px',
                     padding: '7px 14px',
                     fontSize: '12px',
                     fontWeight: '600',
-                    cursor: !bulkStatus || bulkUpdating ? 'default' : 'pointer',
+                    cursor: (
+                      !bulkStatus
+                      || bulkUpdating
+                      || (isNotInterested(bulkStatus) && bulkReasons.length === 0)
+                    ) ? 'default' : 'pointer',
                   }}
                 >
                   {bulkUpdating ? 'Updating…' : 'Apply'}
                 </button>
                 <button
-                  onClick={() => { setSelectedIds([]); setBulkStatus('') }}
+                  onClick={() => { setSelectedIds([]); setBulkStatus(''); setBulkReasons([]) }}
                   style={{ background: 'none', border: 'none', color: '#6B7280', fontSize: '12px', cursor: 'pointer' }}
                 >
                   Clear selection

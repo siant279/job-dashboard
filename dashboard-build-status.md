@@ -71,7 +71,9 @@ If a candidate works, the app caches that field name. If none work, status still
 
 ### Bulk actions
 - Multi-select + select all shown
-- Bulk status change (excludes **not interested** — reasons must be set per card)
+- Bulk status change for all statuses including **not interested**
+- When bulk status is **not interested**, reason chips appear and at least one reason is required before Apply
+- Changing status away from not interested clears reasons on those records
 
 ### Ops
 - Run Now → Make webhook
